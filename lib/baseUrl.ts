@@ -1,4 +1,4 @@
-const CANONICAL_URL = "https://robopro-app.vercel.app";
+const CANONICAL_URL = "https://www.robopro.app";
 
 /**
  * Canonical base URL for sitemap, robots, and metadata.

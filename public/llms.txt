@@ -1,0 +1,43 @@
+# ROBOPRO
+
+> ROBOPRO is a browser-based virtual microcontroller simulation environment. Users load Arduino sketches onto a simulated MCU (avr8js), wire real-world components from spec sheets, and observe behavior in a 3D-visualized robot car — without purchasing any hardware. Reference points: Wokwi (code execution), Proteus (circuit sim), Gazebo (3D physics).
+
+## Services
+
+- [Simulator](https://robopro.example.com): Single-page web app — Monaco code editor, 3D viewport, serial monitor, wiring panel
+- [Arduino-style sketch execution](https://robopro.example.com): Lightweight interpreter for pinMode, digitalWrite, analogWrite, delay, Serial.print/println
+- [Physics simulation](https://robopro.example.com): Differential-drive kinetics, electrical power bus, battery model, deterministic 60 Hz timestep
+- [Component library](https://robopro.example.com): DcMotor (TT 6V), L298N dual H-bridge, BatteryPack (4×AA); extensible via ComponentRegistry
+
+## What We Do Not Do
+
+ROBOPRO explicitly does not provide:
+- Real hardware sales or physical robot kits
+- Full Arduino IDE compatibility (uses lightweight interpreter, not AVR hex compilation)
+- Cloud hosting or user accounts (runs locally in browser)
+- Educational curriculum or lesson plans (tool only)
+- Support for non-AVR microcontrollers (ESP32, STM32, etc.) — planned for future
+
+## Contact
+
+- Project: [ROBOPRO repository](https://github.com/robopro/robopro) (replace with actual URL)
+- Issues: GitHub Issues (replace with actual URL)
+- No commercial support; community-driven open source
+
+## Key Information
+
+- [README](https://robopro.example.com/README.md): Project overview, architecture, features, getting started
+- [Architecture](https://robopro.example.com/.cursor/skills/robopro-architecture/SKILL.md): Three-layer design (Core / State / Render), data flow, extension points
+- [Component authoring](https://robopro.example.com/.cursor/skills/component-authoring/SKILL.md): How to add new sensors, motors, drivers
+- [Physics patterns](https://robopro.example.com/.cursor/skills/physics-patterns/SKILL.md): SI units, timestep, motor model, electrical model
+- [Motion log format](https://robopro.example.com/logs/README.md): Session log structure and interpretation
+
+## AI Discovery Files
+
+- [AI Interaction Guidance](https://robopro.example.com/ai.txt): Permissions and restrictions for AI systems
+- [Identity Data](https://robopro.example.com/identity.json): Structured project identity
+- [FAQ for AI](https://robopro.example.com/faq-ai.txt): Frequently asked questions in AI-readable format
+
+## Optional
+
+- [Sitemap](https://robopro.example.com/sitemap.xml): Site structure for crawlers

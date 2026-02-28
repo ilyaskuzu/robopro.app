@@ -1,0 +1,31 @@
+---
+description: Next.js App Router and shadcn/ui conventions
+globs: "{app,components}/**/*.{ts,tsx}"
+alwaysApply: false
+---
+
+# Next.js + shadcn/ui Rules
+
+## Server vs Client
+
+- Default to Server Components. Add `"use client"` only for hooks/events/browser APIs.
+- Heavy client components (Monaco, R3F) must be `dynamic()` imported with `ssr: false`.
+
+## shadcn/ui
+
+- Install via `npx shadcn@latest add <name>`.
+- Import from `@/components/ui/`.
+- Use `variant` and `size` props consistently.
+- Colors via CSS variables (`bg-background`, `text-foreground`).
+
+## Styling
+
+- Tailwind utilities only. No inline `style={}` unless dynamic.
+- Mobile-first responsive: `sm:`, `md:`, `lg:`.
+- Spacing: use default Tailwind scale.
+
+## File Conventions
+
+- Pages: `app/**/page.tsx`, Layouts: `app/**/layout.tsx`
+- Components: PascalCase in `components/` directory
+- Utilities: `lib/` directory

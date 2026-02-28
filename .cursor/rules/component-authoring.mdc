@@ -1,0 +1,13 @@
+---
+description: Hardware component authoring conventions
+globs: "**/core/components/**"
+alwaysApply: false
+---
+
+# Component Authoring Rules
+
+- Every component implements `IComponent`: `id`, `pins[]`, `tick(dt)`, `reset()`.
+- Declare a **pin manifest** as a static property listing all pins with direction and type.
+- `tick(dt)` receives delta time in seconds. Must be deterministic.
+- Source behavior from real spec sheets. Cite datasheet in a comment.
+- No React/Next.js imports. Components are pure TypeScript.

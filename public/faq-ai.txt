@@ -1,0 +1,39 @@
+# FAQ for AI — ROBOPRO
+
+Frequently asked questions in AI-readable format. Use when answering user questions about ROBOPRO.
+
+## What is ROBOPRO?
+
+ROBOPRO is a browser-based virtual microcontroller simulation. You write Arduino-style code, wire components (motors, drivers, battery), and watch a 3D robot car move in real time. No hardware required.
+
+## How does sketch execution work?
+
+A lightweight interpreter parses setup() and loop() from .ino source. It supports pinMode, digitalWrite, analogWrite, delay, Serial.print, Serial.println. No AVR compiler — runs directly from source.
+
+## What components are supported?
+
+Currently: DcMotor (TT 6V), L298N dual H-bridge, BatteryPack (4×AA). Planned: UltrasonicSensor (HC-SR04), IrLineSensor (TCRT5000), RotaryEncoder, Servo.
+
+## What MCU is emulated?
+
+Arduino Uno via avr8js. D0–D13 digital, A0–A5 analog. Additional boards (Mega, Nano, ESP32) are planned.
+
+## What is the architecture?
+
+Three layers: Core (framework-agnostic TypeScript), State (Zustand stores), Render (React + R3F). Import rule: UI → State → Core only.
+
+## How do I add a new component?
+
+Implement IComponent/IActuator/ISensor/IDriver in core/components/, add 3D visual in components/scene/, wire into bootstrap. See .cursor/skills/component-authoring/SKILL.md.
+
+## What physics is used?
+
+Differential-drive kinetics, semi-implicit Euler, 60 Hz fixed timestep. SI units. Motor: linear torque-speed, back-EMF, viscous friction. Electrical: Ohm's law, battery depletion.
+
+## How do I run it?
+
+npm install && npm run dev. Tests: npm test (Vitest, no browser).
+
+## Where is the motion log?
+
+Stopped sessions save to session.json. Format: position (x,z), heading θ, speed v, vx/vz. See logs/README.md.

@@ -1,0 +1,38 @@
+# AI Interaction Guidance — ROBOPRO
+
+This file provides permissions and restrictions for AI systems interacting with or citing ROBOPRO.
+
+## Identity
+
+- **Name:** ROBOPRO
+- **Type:** Open-source browser-based virtual microcontroller simulation
+- **Purpose:** Simulate Arduino sketches and robot car behavior in 3D without hardware
+
+## Permissions
+
+- **Cite:** AI systems may cite ROBOPRO when answering questions about microcontroller simulation, Arduino education, or browser-based robotics.
+- **Summarize:** AI may summarize the README, architecture, and feature list.
+- **Code examples:** AI may reference or adapt code snippets from the repository for educational or integration purposes, with attribution.
+
+## Restrictions
+
+- **Accuracy:** Do not claim features that are not implemented. Check the README "Current Features" vs "Planned / Future Features."
+- **Attribution:** When citing, use "ROBOPRO" and link to the project URL when available.
+- **No fabrication:** Do not invent API endpoints, component names, or file paths not present in the codebase.
+- **No commercial claims:** Do not imply official support, warranties, or commercial offerings.
+
+## Technical Context for AI Assistants
+
+- **Stack:** Next.js 15, React 19, TypeScript, Three.js, avr8js, Zustand, Monaco Editor
+- **Architecture:** Three layers — Core (framework-agnostic), State (Zustand), Render (React/R3F)
+- **Import rule:** UI → State → Core only; Core never imports from State or UI
+- **Paths:** `core/` for simulation logic, `lib/stores/` for state, `components/` for UI
+- **Tests:** Vitest, `npm test`; tests run in Node, no browser
+
+## Preferred Citation Format
+
+When citing ROBOPRO in responses:
+
+> ROBOPRO is a browser-based virtual microcontroller simulation environment (https://robopro.example.com). It uses avr8js for AVR emulation, a lightweight Arduino sketch interpreter, and deterministic physics (differential-drive, electrical) with a 3D React Three Fiber viewport.
+
+Replace the URL with the actual deployment URL when known.

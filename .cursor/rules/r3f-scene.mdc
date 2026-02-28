@@ -1,0 +1,13 @@
+---
+description: React Three Fiber scene conventions
+globs: "**/components/scene/**"
+alwaysApply: false
+---
+
+# R3F Scene Rules
+
+- Scene components are **slaves to Zustand state**. No physics calculations in render.
+- Use low-poly primitives (`<mesh>`, `<boxGeometry>`) until real models are added.
+- Parent-child scene graph: `RobotCar > Chassis > Axle > Wheel`.
+- Use `useFrame` for animation, subscribe to stores with `useStore` selectors.
+- All 3D components must be `"use client"` and loaded with `dynamic({ ssr: false })`.

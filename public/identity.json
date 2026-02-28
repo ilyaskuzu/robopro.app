@@ -1,0 +1,35 @@
+{
+  "name": "ROBOPRO",
+  "description": "Browser-based virtual microcontroller simulation environment. Load Arduino sketches onto a simulated MCU, wire real-world components, and observe behavior in a 3D-visualized robot car without hardware.",
+  "type": "software",
+  "url": "https://robopro.example.com",
+  "repository": "https://github.com/robopro/robopro",
+  "version": "0.1.0",
+  "keywords": [
+    "arduino",
+    "microcontroller",
+    "simulation",
+    "avr8js",
+    "robotics",
+    "education",
+    "three.js",
+    "react"
+  ],
+  "techStack": [
+    "Next.js 15",
+    "React 19",
+    "TypeScript",
+    "Three.js",
+    "React Three Fiber",
+    "avr8js",
+    "Zustand",
+    "Monaco Editor",
+    "Vitest"
+  ],
+  "architecture": {
+    "layers": ["Core", "State", "Render"],
+    "corePath": "core/",
+    "statePath": "lib/stores/",
+    "renderPath": "app/ and components/"
+  }
+}

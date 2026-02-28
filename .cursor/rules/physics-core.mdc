@@ -1,0 +1,13 @@
+---
+description: Physics engine conventions
+globs: "**/core/physics/**"
+alwaysApply: false
+---
+
+# Physics Core Rules
+
+- SI units everywhere: meters, seconds, kilograms, newtons, volts, amps.
+- Pure functions preferred. Deterministic given same inputs.
+- Default integration: semi-implicit Euler. Document if using different method.
+- Fixed timestep (e.g., `dt = 1/120`). Variable dt only in outer loop.
+- All physics classes must be testable without DOM or React.

@@ -1,0 +1,46 @@
+---
+description: Core architecture rules for the ROBOPRO platform - layer isolation, imports, naming
+alwaysApply: true
+---
+
+# ROBOPRO Architecture Rules
+
+## Three-Layer Isolation
+
+- `core/` -- pure TypeScript, NO imports from `react`, `next`, `three`, `zustand`
+- `lib/stores/` -- Zustand stores, may import from `core/` interfaces only
+- `app/` + `components/` -- React/Next.js UI, imports from stores and core interfaces
+
+## Module Structure
+
+- `core/mcu/` -- Virtual MCU (avr8js wrapper, pin state machine)
+- `core/components/` -- Simulated hardware (motors, sensors, drivers, power)
+- `core/physics/` -- Deterministic engines (kinetic, electrical)
+- `core/simulation/` -- Orchestration (game loop, signal bus, wiring, registry)
+- `lib/stores/` -- Zustand state stores
+- `app/` -- Next.js pages and layouts
+- `components/` -- React UI components (scene, editor, controls, wiring)
+
+## Import Direction
+
+```
+UI → State → Core    ✅
+Core → State          ❌
+Core → UI             ❌
+State → UI            ❌
+```
+
+## Naming
+
+- Interfaces: `I` prefix (`IComponent`, `IMicrocontroller`)
+- Stores: `use` prefix (`useSimulationStore`)
+- Components: PascalCase files (`.tsx`)
+- Core classes: PascalCase files (`.ts`)
+
+## DI Mandate
+
+Core classes accept interfaces via constructor, never instantiate concrete dependencies internally.
+
+## Single Source of Truth
+
+Each piece of state lives in exactly one Zustand store. Components subscribe; they never duplicate state.

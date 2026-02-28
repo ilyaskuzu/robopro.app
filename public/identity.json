@@ -2,7 +2,7 @@
   "name": "ROBOPRO",
   "description": "Browser-based virtual microcontroller simulation environment. Load Arduino sketches onto a simulated MCU, wire real-world components, and observe behavior in a 3D-visualized robot car without hardware.",
   "type": "software",
-  "url": "https://robopro-app.vercel.app/",
+  "url": "https://www.robopro.app/",
   "repository": "https://github.com/ilyaskuzu/robopro.app",
   "version": "0.1.0",
   "keywords": [

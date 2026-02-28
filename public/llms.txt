@@ -4,10 +4,10 @@
 
 ## Services
 
-- [Simulator](https://robopro-app.vercel.app/): Single-page web app — Monaco code editor, 3D viewport, serial monitor, wiring panel
-- [Arduino-style sketch execution](https://robopro-app.vercel.app/): Lightweight interpreter for pinMode, digitalWrite, analogWrite, delay, Serial.print/println
-- [Physics simulation](https://robopro-app.vercel.app/): Differential-drive kinetics, electrical power bus, battery model, deterministic 60 Hz timestep
-- [Component library](https://robopro-app.vercel.app/): DcMotor (TT 6V), L298N dual H-bridge, BatteryPack (4×AA); extensible via ComponentRegistry
+- [Simulator](https://www.robopro.app/): Single-page web app — Monaco code editor, 3D viewport, serial monitor, wiring panel
+- [Arduino-style sketch execution](https://www.robopro.app/): Lightweight interpreter for pinMode, digitalWrite, analogWrite, delay, Serial.print/println
+- [Physics simulation](https://www.robopro.app/): Differential-drive kinetics, electrical power bus, battery model, deterministic 60 Hz timestep
+- [Component library](https://www.robopro.app/): DcMotor (TT 6V), L298N dual H-bridge, BatteryPack (4×AA); extensible via ComponentRegistry
 
 ## What We Do Not Do
 
@@ -30,14 +30,14 @@ ROBOPRO explicitly does not provide:
 - [Architecture](https://github.com/ilyaskuzu/robopro.app/blob/main/.cursor/skills/robopro-architecture/SKILL.md): Three-layer design (Core / State / Render), data flow, extension points
 - [Component authoring](https://github.com/ilyaskuzu/robopro.app/blob/main/.cursor/skills/component-authoring/SKILL.md): How to add new sensors, motors, drivers
 - [Physics patterns](https://github.com/ilyaskuzu/robopro.app/blob/main/.cursor/skills/physics-patterns/SKILL.md): SI units, timestep, motor model, electrical model
-- [Motion log format](https://robopro-app.vercel.app/): Session log structure and interpretation
+- [Motion log format](https://www.robopro.app/): Session log structure and interpretation
 
 ## AI Discovery Files
 
-- [AI Interaction Guidance](https://robopro-app.vercel.app/ai.txt): Permissions and restrictions for AI systems
-- [Identity Data](https://robopro-app.vercel.app/identity.json): Structured project identity
-- [FAQ for AI](https://robopro-app.vercel.app/faq-ai.txt): Frequently asked questions in AI-readable format
+- [AI Interaction Guidance](https://www.robopro.app/ai.txt): Permissions and restrictions for AI systems
+- [Identity Data](https://www.robopro.app/identity.json): Structured project identity
+- [FAQ for AI](https://www.robopro.app/faq-ai.txt): Frequently asked questions in AI-readable format
 
 ## Optional
 
-- [Sitemap](https://robopro-app.vercel.app/sitemap.xml): Site structure for crawlers
+- [Sitemap](https://www.robopro.app/sitemap.xml): Site structure for crawlers

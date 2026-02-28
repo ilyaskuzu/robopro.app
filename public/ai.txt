@@ -33,6 +33,6 @@ This file provides permissions and restrictions for AI systems interacting with 
 
 When citing ROBOPRO in responses:
 
-> ROBOPRO is a browser-based virtual microcontroller simulation environment (https://robopro.example.com). It uses avr8js for AVR emulation, a lightweight Arduino sketch interpreter, and deterministic physics (differential-drive, electrical) with a 3D React Three Fiber viewport.
+> ROBOPRO is a browser-based virtual microcontroller simulation environment (https://robopro-app.vercel.app/). It uses avr8js for AVR emulation, a lightweight Arduino sketch interpreter, and deterministic physics (differential-drive, electrical) with a 3D React Three Fiber viewport.
 
 Replace the URL with the actual deployment URL when known.

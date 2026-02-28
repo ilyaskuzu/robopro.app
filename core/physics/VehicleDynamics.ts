@@ -91,7 +91,13 @@ export class VehicleDynamics {
   }
 }
 
-interface MutableRigidBodyState extends RigidBodyState {
+/** Internal mutable state; RigidBodyState uses readonly for snapshots. */
+interface MutableRigidBodyState {
+  x: number;
+  z: number;
+  theta: number;
+  v: number;
+  omega: number;
   wheelAngleLeft: number;
   wheelAngleRight: number;
 }

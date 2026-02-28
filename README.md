@@ -2,8 +2,6 @@
 
 A browser-based virtual microcontroller simulation environment. Load Arduino sketches onto a simulated MCU, wire up real-world components from spec sheets, and observe behavior in a 3D-visualized robot car — without purchasing any hardware.
 
-**Reference points:** [Wokwi](https://wokwi.com) (code execution), [Proteus](https://www.labcenter.com) (circuit sim), [Gazebo](https://gazebosim.org) (3D physics).
-
 ---
 
 ## Features

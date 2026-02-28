@@ -1,6 +1,5 @@
 import type { MetadataRoute } from "next";
-
-const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL ?? "https://robopro.example.com";
+import { getBaseUrl } from "@/lib/baseUrl";
 
 /**
  * robots.txt — Crawler directives per Robots Exclusion Standard.
@@ -49,7 +48,7 @@ export default function robots(): MetadataRoute.Robots {
         disallow: ["/api/", "/_next/", "/.well-known/"],
       },
     ],
-    sitemap: `${BASE_URL}/sitemap.xml`,
-    host: BASE_URL,
+    sitemap: `${getBaseUrl()}/sitemap.xml`,
+    host: getBaseUrl(),
   };
 }

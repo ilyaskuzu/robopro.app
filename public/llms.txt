@@ -5,7 +5,7 @@
 ## Services
 
 - [Simulator](https://robopro-app.vercel.app/): Single-page web app — Monaco code editor, 3D viewport, serial monitor, wiring panel
-- [Arduino-style sketch execution](https://robopro-app.vercel.app/m): Lightweight interpreter for pinMode, digitalWrite, analogWrite, delay, Serial.print/println
+- [Arduino-style sketch execution](https://robopro-app.vercel.app/): Lightweight interpreter for pinMode, digitalWrite, analogWrite, delay, Serial.print/println
 - [Physics simulation](https://robopro-app.vercel.app/): Differential-drive kinetics, electrical power bus, battery model, deterministic 60 Hz timestep
 - [Component library](https://robopro-app.vercel.app/): DcMotor (TT 6V), L298N dual H-bridge, BatteryPack (4×AA); extensible via ComponentRegistry
 

@@ -186,7 +186,7 @@ For AI systems and crawlers, the following files are available at the site root:
 | `/robots.txt` | Crawler directives (generated) |
 | `/sitemap.xml` | Site structure (generated) |
 
-**Base URL:** Set `NEXT_PUBLIC_BASE_URL` (e.g. `https://your-domain.com`) for production. Defaults to `https://robopro.example.com` in configs.
+**Base URL:** Set `NEXT_PUBLIC_BASE_URL` (e.g. `https://robopro-app.vercel.app`) for production. Defaults to `https://robopro-app.vercel.app` in configs.
 
 ---
 

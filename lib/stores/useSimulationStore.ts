@@ -70,7 +70,7 @@ export const useSimulationStore = create<SimulationStoreState>((set, get) => ({
     const loop = new SimulationLoop(mcu, components, wiring, config);
 
     const callbacks: SketchCallbacks = {
-      onPinMode: (_pin, _mode) => {},
+      onPinMode: (_pin, _mode) => { },
       onDigitalWrite: (pin, value) => {
         mcu.writePin(pin, value);
       },
@@ -87,6 +87,14 @@ export const useSimulationStore = create<SimulationStoreState>((set, get) => ({
       onSerialPrint: (text) => {
         useMcuStore.getState().appendSerial(text);
       },
+      onDigitalRead: (pin) => {
+        const mcuPin = mcu.getPin(pin);
+        return mcuPin ? (mcuPin.value > 0.5 ? 1 : 0) : 0;
+      },
+      onAnalogRead: (pin) => {
+        const mcuPin = mcu.getPin(pin);
+        return mcuPin ? Math.round(mcuPin.value * 1023) : 0;
+      },
     };
 
     const interpreter = new SketchInterpreter(callbacks);
@@ -102,75 +110,81 @@ export const useSimulationStore = create<SimulationStoreState>((set, get) => ({
   },
 
   tick: () => {
-    const { simulationLoop, isRunning, config, interpreter } = get();
+    const { simulationLoop, isRunning, config, interpreter, speed } = get();
     if (!simulationLoop || !isRunning || !config) return;
 
     const dtMs = config.fixedDt * 1000;
+    const stepsPerFrame = Math.max(1, Math.round(speed));
 
-    if (interpreter?.isRunning) {
-      interpreter.tick(dtMs);
-    }
-
-    const snapshot: SimulationSnapshot = simulationLoop.step();
-
-    const kineticStates: Record<string, IKineticState> = {};
-    for (const [id, state] of snapshot.kineticStates) kineticStates[id] = state;
-    const componentOutputs: Record<string, PinValueMap> = {};
-    for (const [id, outputs] of snapshot.componentOutputs) componentOutputs[id] = outputs;
-
-    set((prev) => {
-      const tickCount = prev.tickCount + 1;
-      const body = snapshot.rigidBodyState;
-      let motionLog = prev.motionLog;
-      if (body) {
-        const deg = (body.theta * 180) / Math.PI;
-        const dir = ((deg % 360) + 360) % 360;
-        const vCm = body.v * 100;
-        const omegaDeg = Math.abs(body.omega * 180 / Math.PI);
-        const mL = kineticStates['motor-left'];
-        const mR = kineticStates['motor-right'];
-        const motorL = mL ? mL.linearVelocity * 100 : 0;
-        const motorR = mR ? mR.linearVelocity * 100 : 0;
-
-        const driverOut = componentOutputs['driver'];
-        const pwrA = driverOut ? Math.abs(driverOut['OUT_A'] ?? 0) : 0;
-        const pwrB = driverOut ? Math.abs(driverOut['OUT_B'] ?? 0) : 0;
-        const dirA = driverOut ? (driverOut['DIR_A'] ?? 0) : 0;
-        const dirB = driverOut ? (driverOut['DIR_B'] ?? 0) : 0;
-        const motorsOn = pwrA > 0.01 || pwrB > 0.01;
-        const sameDir = dirA === dirB && dirA !== 0;
-        const oppDir = dirA !== 0 && dirB !== 0 && dirA !== dirB;
-
-        let phase = 'STOPPED';
-        if (motorsOn && sameDir) phase = 'FORWARD';
-        else if (motorsOn && oppDir) phase = 'PIVOT';
-        else if (motorsOn) phase = 'DRIVE';
-        else if (!motorsOn && (Math.abs(vCm) > 0.5 || omegaDeg > 5)) phase = 'COASTING';
-        else phase = 'STOPPED';
-
-        const entry: MotionLogEntry = {
-          tick: tickCount,
-          x: body.x,
-          z: body.z,
-          dir,
-          v: body.v,
-          omega: body.omega,
-          motorL,
-          motorR,
-          phase,
-        };
-        motionLog = [...prev.motionLog, entry].slice(-MOTION_LOG_MAX);
+    for (let s = 0; s < stepsPerFrame; s++) {
+      if (interpreter?.isRunning) {
+        interpreter.tick(dtMs);
       }
-      return {
-        kineticStates,
-        rigidBodyState: snapshot.rigidBodyState,
-        motionLog,
-        componentOutputs,
-        supplyVoltage: snapshot.supplyVoltage,
-        totalCurrent: snapshot.totalCurrent,
-        tickCount,
-      };
-    });
+
+      const snapshot: SimulationSnapshot = simulationLoop.step();
+
+      // Only update state on last step of multi-step frame
+      if (s === stepsPerFrame - 1) {
+        const kineticStates: Record<string, IKineticState> = {};
+        for (const [id, state] of snapshot.kineticStates) kineticStates[id] = state;
+        const componentOutputs: Record<string, PinValueMap> = {};
+        for (const [id, outputs] of snapshot.componentOutputs) componentOutputs[id] = outputs;
+
+        set((prev) => {
+          const tickCount = prev.tickCount + stepsPerFrame;
+          const body = snapshot.rigidBodyState;
+          let motionLog = prev.motionLog;
+          if (body) {
+            const deg = (body.theta * 180) / Math.PI;
+            const dir = ((deg % 360) + 360) % 360;
+            const vCm = body.v * 100;
+            const omegaDeg = Math.abs(body.omega * 180 / Math.PI);
+            const mL = kineticStates['motor-left'];
+            const mR = kineticStates['motor-right'];
+            const motorL = mL ? mL.linearVelocity * 100 : 0;
+            const motorR = mR ? mR.linearVelocity * 100 : 0;
+
+            const driverOut = componentOutputs['driver'];
+            const pwrA = driverOut ? Math.abs(driverOut['OUT_A'] ?? 0) : 0;
+            const pwrB = driverOut ? Math.abs(driverOut['OUT_B'] ?? 0) : 0;
+            const dirA = driverOut ? (driverOut['DIR_A'] ?? 0) : 0;
+            const dirB = driverOut ? (driverOut['DIR_B'] ?? 0) : 0;
+            const motorsOn = pwrA > 0.01 || pwrB > 0.01;
+            const sameDir = dirA === dirB && dirA !== 0;
+            const oppDir = dirA !== 0 && dirB !== 0 && dirA !== dirB;
+
+            let phase = 'STOPPED';
+            if (motorsOn && sameDir) phase = 'FORWARD';
+            else if (motorsOn && oppDir) phase = 'PIVOT';
+            else if (motorsOn) phase = 'DRIVE';
+            else if (!motorsOn && (Math.abs(vCm) > 0.5 || omegaDeg > 5)) phase = 'COASTING';
+            else phase = 'STOPPED';
+
+            const entry: MotionLogEntry = {
+              tick: tickCount,
+              x: body.x,
+              z: body.z,
+              dir,
+              v: body.v,
+              omega: body.omega,
+              motorL,
+              motorR,
+              phase,
+            };
+            motionLog = [...prev.motionLog, entry].slice(-MOTION_LOG_MAX);
+          }
+          return {
+            kineticStates,
+            rigidBodyState: snapshot.rigidBodyState,
+            motionLog,
+            componentOutputs,
+            supplyVoltage: snapshot.supplyVoltage,
+            totalCurrent: snapshot.totalCurrent,
+            tickCount,
+          };
+        });
+      } // end if last step
+    } // end for stepsPerFrame
   },
 
   play: () => {

@@ -40,16 +40,16 @@ void loop() {
   analogWrite(6, 0);
   delay(1000);
 
-  // --- PIVOT TURN LEFT (2000ms) ---
+  // --- PIVOT TURN LEFT (~90°) ---
   // Left wheel backward + Right wheel forward = pivot in place (turn left)
   // Left:  IN1=L, IN2=H (backward) | Right: IN3=H, IN4=L (forward)
   digitalWrite(7, LOW);
   digitalWrite(8, HIGH);
   digitalWrite(9, HIGH);
   digitalWrite(10, LOW);
-  analogWrite(5, 200);
-  analogWrite(6, 200);
-  delay(2000);
+  analogWrite(5, 49);
+  analogWrite(6, 49);
+  delay(455);
 
   // --- STOP (1000ms) ---
   analogWrite(5, 0);

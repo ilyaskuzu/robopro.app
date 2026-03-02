@@ -6,12 +6,11 @@ import { useSimulationStore } from "@/lib/stores/useSimulationStore";
 export function SimulationDriver() {
   const tick = useSimulationStore((s) => s.tick);
   const isRunning = useSimulationStore((s) => s.isRunning);
-  const speed = useSimulationStore((s) => s.speed);
+  // Speed is handled inside store.tick() — no multiplication here to avoid double-speed bug
 
   useFrame(() => {
     if (!isRunning) return;
-    const steps = Math.max(1, Math.round(speed));
-    for (let i = 0; i < steps; i++) tick();
+    tick();
   });
 
   return null;

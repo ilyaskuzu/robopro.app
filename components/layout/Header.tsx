@@ -1,44 +1,17 @@
 "use client";
 
-import { useState } from "react";
-import { Play, Pause, RotateCcw, Square, Cpu, Save, FolderOpen, BookOpen } from "lucide-react";
+import { useState, useRef, useEffect } from "react";
+import { Play, Pause, RotateCcw, Square, Cpu, Save, FolderOpen, BookOpen, Code, Wrench, Globe } from "lucide-react";
 import { useSimulationStore } from "@/lib/stores/useSimulationStore";
 import { useMcuStore } from "@/lib/stores/useMcuStore";
 import { useWiringStore } from "@/lib/stores/useWiringStore";
-import { serializeProject, deserializeProject, downloadProject, openProjectFile, type ProjectData } from "@/core/simulation/ProjectSerializer";
+import { useProjectStore } from "@/lib/stores/useProjectStore";
+import { useLayoutStore, type AppPage } from "@/lib/stores/useLayoutStore";
+import { serializeProject, deserializeProject, downloadProject, openProjectFile, type ProjectData, type SavedAssemblyPlacement } from "@/core/simulation/ProjectSerializer";
+import { loadProjectData } from "@/lib/projectLoad";
+import { useAssemblyStore } from "@/lib/stores/useAssemblyStore";
+import { useWiringEditorStore } from "@/lib/stores/useWiringEditorStore";
 import { PRESETS, PRESET_NAMES } from "@/core/sketch/presets";
-import { DcMotor, TT_MOTOR_6V } from "@/core/components/motors/DcMotor";
-import { L298N } from "@/core/components/drivers/L298N";
-import { BatteryPack, BATTERY_4xAA } from "@/core/components/power/BatteryPack";
-import { UltrasonicSensor } from "@/core/components/sensors/UltrasonicSensor";
-import { IrLineSensor } from "@/core/components/sensors/IrLineSensor";
-import { RotaryEncoder } from "@/core/components/sensors/RotaryEncoder";
-import type { IComponent } from "@/core/components/interfaces/IComponent";
-
-function createComponent(type: string, id: string): IComponent | null {
-  switch (type) {
-    case "dc-motor": return new DcMotor(id, TT_MOTOR_6V);
-    case "l298n": return new L298N(id);
-    case "battery-4aa": return new BatteryPack(id, BATTERY_4xAA);
-    case "hc-sr04": return new UltrasonicSensor(id);
-    case "ir-line": return new IrLineSensor(id);
-    case "encoder": return new RotaryEncoder(id);
-    default: return null;
-  }
-}
-
-function loadProjectData(data: ProjectData) {
-  const { clearAll, addWire } = useWiringStore.getState();
-  const { loadSketch } = useSimulationStore.getState();
-
-  clearAll();
-
-  for (const wire of data.wires) {
-    addWire(wire.mcuPinIndex, wire.componentId, wire.componentPinName);
-  }
-
-  loadSketch(data.sketch);
-}
 
 export function Header() {
   const isRunning = useSimulationStore((s) => s.isRunning);
@@ -49,18 +22,76 @@ export function Header() {
   const setSpeed = useSimulationStore((s) => s.setSpeed);
   const appendSerial = useMcuStore((s) => s.appendSerial);
   const [showPresets, setShowPresets] = useState(false);
+  const presetsRef = useRef<HTMLDivElement>(null);
+  const layoutMode = useLayoutStore((s) => s.page);
+  const setLayoutMode = useLayoutStore((s) => s.setPage);
+  const shortcutHelpOpen = useLayoutStore((s) => s.shortcutHelpOpen);
+  const setShortcutHelpOpen = useLayoutStore((s) => s.setShortcutHelpOpen);
+
+  const MODE_ICONS: Record<AppPage, typeof Code> = {
+    assembly: Code,
+    wiring: Wrench,
+    simulation: Globe,
+  };
+  const MODE_LABELS: Record<AppPage, string> = {
+    assembly: 'Assembly',
+    wiring: 'Wiring',
+    simulation: 'Simulate',
+  };
+
+  // Click-outside to close presets dropdown
+  useEffect(() => {
+    if (!showPresets) return;
+    function handleClickOutside(e: MouseEvent) {
+      if (presetsRef.current && !presetsRef.current.contains(e.target as Node)) {
+        setShowPresets(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showPresets]);
 
   const handleSave = () => {
-    const { connections } = useWiringStore.getState();
-    const { sketchSource } = useSimulationStore.getState();
+    const { placedComponents, connections } = useWiringStore.getState();
+    const { sketchSource, obstacleWorld, lineTrack } = useSimulationStore.getState();
+    const assemblyPlacements = useAssemblyStore.getState().placements;
+    const { selectedBoardType, selectedMotorId, selectedDriverId, selectedBatteryId } = useProjectStore.getState();
+    const editorWires = useWiringEditorStore.getState().wires;
+    const savedAssembly: SavedAssemblyPlacement[] = assemblyPlacements.map((p) => ({
+      id: p.id,
+      catalogId: p.catalogId,
+      category: p.category,
+    }));
+    const savedEditorWires = editorWires
+      .filter(w => w.fromComponentId !== '__mcu__' || w.fromPinName === 'VIN' || w.fromPinName === '5V' || w.fromPinName === 'GND')
+      .filter(w => w.toComponentId !== '__mcu__' || w.toPinName === 'VIN' || w.toPinName === '5V' || w.toPinName === 'GND')
+      .map(w => ({
+        fromComponentId: w.fromComponentId,
+        fromPinName: w.fromPinName,
+        toComponentId: w.toComponentId,
+        toPinName: w.toPinName,
+      }));
     const json = serializeProject(
       "robopro-project",
       sketchSource,
-      [],
+      placedComponents.map((c) => ({ type: c.type, id: c.id })),
       connections,
+      obstacleWorld.getObstacles(),
+      lineTrack.getPoints(),
+      lineTrack.getLineWidth(),
       [],
       [],
-      0.02,
+      [],
+      {
+        catalogSelections: {
+          motorId: selectedMotorId,
+          driverId: selectedDriverId,
+          batteryId: selectedBatteryId,
+          boardType: selectedBoardType,
+        },
+        assemblyPlacements: savedAssembly,
+        editorWires: savedEditorWires,
+      },
     );
     downloadProject(json, "robopro-project.json");
     appendSerial("> Project saved.");
@@ -162,7 +193,7 @@ export function Header() {
         >
           <FolderOpen className="h-3 w-3" /> Load
         </button>
-        <div className="relative">
+        <div className="relative" ref={presetsRef}>
           <button
             onClick={() => setShowPresets(!showPresets)}
             className="flex items-center gap-1 rounded px-2 py-1 text-xs font-medium bg-muted hover:bg-accent text-muted-foreground transition-colors"
@@ -171,12 +202,15 @@ export function Header() {
             <BookOpen className="h-3 w-3" /> Presets
           </button>
           {showPresets && (
-            <div className="absolute top-full left-0 mt-1 z-50 min-w-[200px] rounded-md border border-border bg-card shadow-lg">
+            <div className="absolute top-full left-0 mt-1 z-50 min-w-[220px] rounded-lg border border-zinc-600 bg-zinc-800 shadow-xl overflow-hidden">
+              <div className="px-2.5 py-1.5 border-b border-zinc-600">
+                <span className="text-xs font-semibold text-zinc-100">Load preset</span>
+              </div>
               {PRESET_NAMES.map((name) => (
                 <button
                   key={name}
                   onClick={() => handlePreset(name)}
-                  className="block w-full px-3 py-2 text-left text-xs text-foreground hover:bg-accent transition-colors"
+                  className="block w-full px-3 py-2.5 text-left text-sm text-zinc-100 hover:bg-zinc-700 transition-colors border-b border-zinc-700/80 last:border-0"
                 >
                   {PRESETS[name].name}
                 </button>
@@ -185,6 +219,57 @@ export function Header() {
           )}
         </div>
       </div>
+
+      <div className="flex-1" />
+
+      {/* Layout mode switcher */}
+      <div className="flex items-center gap-0.5 bg-muted rounded-md p-0.5">
+        {(Object.keys(MODE_LABELS) as AppPage[]).map((m) => {
+          const Icon = MODE_ICONS[m];
+          return (
+            <button
+              key={m}
+              onClick={() => setLayoutMode(m)}
+              className={`flex items-center gap-1 rounded px-2 py-1 text-xs font-medium transition-colors ${
+                layoutMode === m
+                  ? 'bg-primary text-primary-foreground'
+                  : 'text-muted-foreground hover:bg-accent'
+              }`}
+              title={`${MODE_LABELS[m]} mode (${m === 'assembly' ? '1' : m === 'wiring' ? '2' : '3'})`}
+            >
+              <Icon className="h-3 w-3" />
+              {MODE_LABELS[m]}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Keyboard help */}
+      <button
+        onClick={() => setShortcutHelpOpen(!shortcutHelpOpen)}
+        className="ml-2 rounded px-1.5 py-0.5 text-xs font-bold text-muted-foreground hover:bg-accent transition-colors"
+        title="Keyboard shortcuts (?)"
+      >
+        ?
+      </button>
+
+      {/* Shortcut help overlay */}
+      {shortcutHelpOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setShortcutHelpOpen(false)}>
+          <div className="bg-card border border-border rounded-lg p-4 max-w-sm shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-sm font-semibold mb-2">Keyboard Shortcuts</h3>
+            <div className="grid grid-cols-2 gap-1 text-xs text-muted-foreground">
+              <kbd className="font-mono bg-muted rounded px-1">Ctrl+R</kbd><span>Run / Stop</span>
+              <kbd className="font-mono bg-muted rounded px-1">Ctrl+S</kbd><span>Save project</span>
+              <kbd className="font-mono bg-muted rounded px-1">Ctrl+O</kbd><span>Open project</span>
+              <kbd className="font-mono bg-muted rounded px-1">1 / 2 / 3</kbd><span>Code / Circuit / Env mode</span>
+              <kbd className="font-mono bg-muted rounded px-1">Delete</kbd><span>Delete selected</span>
+              <kbd className="font-mono bg-muted rounded px-1">?</kbd><span>This dialog</span>
+            </div>
+            <button onClick={() => setShortcutHelpOpen(false)} className="mt-3 w-full rounded bg-muted hover:bg-accent text-xs py-1 transition-colors">Close</button>
+          </div>
+        </div>
+      )}
     </header>
   );
 }

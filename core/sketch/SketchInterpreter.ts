@@ -60,6 +60,15 @@ export interface SketchCallbacks {
   onSerialPrint: (text: string) => void;
   onDigitalRead?: (pin: number) => number;
   onAnalogRead?: (pin: number) => number;
+  onServoAttach?: (servoId: string, pin: number) => void;
+  onServoWrite?: (servoId: string, angle: number) => void;
+  onServoDetach?: (servoId: string) => void;
+  onTone?: (pin: number, frequency: number, duration?: number) => void;
+  onNoTone?: (pin: number) => void;
+  onPulseIn?: (pin: number, value: number, timeout?: number) => number;
+  onWireWrite?: (address: number, data: number[]) => void;
+  onWireRead?: (address: number, quantity: number) => number[];
+  onError?: (message: string, severity: 'error' | 'warning') => void;
 }
 
 // ─── AST Node Types ──────────────────────────────────────────
@@ -79,12 +88,24 @@ type ASTNode =
   | { type: 'while'; condition: ASTNode; body: ASTNode }
   | { type: 'for'; init: ASTNode | null; condition: ASTNode | null; update: ASTNode | null; body: ASTNode }
   | { type: 'delay'; ms: ASTNode }
-  | { type: 'noop' };
+  | { type: 'noop' }
+  | { type: 'switch'; expr: ASTNode; cases: Array<{ values: ASTNode[]; body: ASTNode[] }>; defaultBody: ASTNode[] }
+  | { type: 'doWhile'; condition: ASTNode; body: ASTNode }
+  | { type: 'break' }
+  | { type: 'continue' }
+  | { type: 'return'; value: ASTNode | null }
+  | { type: 'ternary'; condition: ASTNode; consequent: ASTNode; alternate: ASTNode }
+  | { type: 'arrayLiteral'; elements: ASTNode[] }
+  | { type: 'arrayDecl'; name: string; elements: ASTNode[] }
+  | { type: 'arrayAccess'; name: string; index: ASTNode }
+  | { type: 'arrayAssign'; name: string; index: ASTNode; value: ASTNode }
+  | { type: 'methodCall'; object: string; method: string; args: ASTNode[] }
+  | { type: 'stepperInit'; steps: ASTNode; p1: ASTNode; p2: ASTNode; p3: ASTNode; p4: ASTNode };
 
 // ─── Tokenizer ───────────────────────────────────────────────
 
 interface Token {
-  type: 'number' | 'string' | 'ident' | 'op' | 'paren' | 'brace' | 'semi' | 'comma' | 'dot';
+  type: 'number' | 'string' | 'ident' | 'op' | 'paren' | 'brace' | 'semi' | 'comma' | 'dot' | 'bracket' | 'question' | 'colon';
   value: string;
 }
 
@@ -128,6 +149,14 @@ function tokenize(source: string): Token[] {
       tokens.push({ type: 'string', value: str });
       continue;
     }
+    // Hex number (0x / 0X)
+    if (source[i] === '0' && i + 2 < source.length && /[xX]/.test(source[i + 1]) && /[0-9a-fA-F]/.test(source[i + 2])) {
+      let num = '0';
+      i += 2;
+      while (i < source.length && /[0-9a-fA-F]/.test(source[i])) { num += source[i]; i++; }
+      tokens.push({ type: 'number', value: String(parseInt(num, 16)) });
+      continue;
+    }
     // Number (int or float)
     if (/[0-9]/.test(source[i]) || (source[i] === '.' && i + 1 < source.length && /[0-9]/.test(source[i + 1]))) {
       let num = '';
@@ -156,6 +185,9 @@ function tokenize(source: string): Token[] {
     if (ch === ';') { tokens.push({ type: 'semi', value: ch }); i++; continue; }
     if (ch === ',') { tokens.push({ type: 'comma', value: ch }); i++; continue; }
     if (ch === '.') { tokens.push({ type: 'dot', value: ch }); i++; continue; }
+    if ('[]'.includes(ch)) { tokens.push({ type: 'bracket', value: ch }); i++; continue; }
+    if (ch === '?') { tokens.push({ type: 'question', value: ch }); i++; continue; }
+    if (ch === ':') { tokens.push({ type: 'colon', value: ch }); i++; continue; }
     if ('+-*/%<>=!&|^~'.includes(ch)) { tokens.push({ type: 'op', value: ch }); i++; continue; }
     // Unknown char — skip
     i++;
@@ -168,7 +200,9 @@ function tokenize(source: string): Token[] {
 class Parser {
   private pos = 0;
   private defines = new Map<string, number>();
-  private userFunctions = new Map<string, ASTNode>();
+  private userFunctions = new Map<string, { params: string[]; body: ASTNode }>();
+  /** Global-scope variable declarations (Servo, String, etc.) */
+  globalDecls: ASTNode[] = [];
   setupAST: ASTNode = { type: 'block', body: [] };
   loopAST: ASTNode = { type: 'block', body: [] };
 
@@ -191,14 +225,25 @@ class Parser {
             this.advance(); // skip name
             if (this.check('paren', '(')) {
               this.advance(); // skip (
-              // Skip params (we don't support params yet)
-              while (!this.check('paren', ')') && this.pos < this.tokens.length) this.advance();
+              // Parse parameter names
+              const params: string[] = [];
+              while (!this.check('paren', ')') && this.pos < this.tokens.length) {
+                // Skip type keyword
+                if (this.check('ident')) this.advance();
+                // Handle 'unsigned int' etc.
+                if (this.check('ident') && ['int', 'long', 'char', 'short'].includes(this.peek().value)) this.advance();
+                // Get param name
+                if (this.check('ident')) {
+                  params.push(this.advance().value);
+                }
+                if (this.check('comma')) this.advance();
+              }
               if (this.check('paren', ')')) this.advance(); // skip )
               if (this.check('brace', '{')) {
                 const body = this.parseBlock();
                 if (name === 'setup') this.setupAST = body;
                 else if (name === 'loop') this.loopAST = body;
-                else this.userFunctions.set(name, body);
+                else this.userFunctions.set(name, { params, body });
                 continue;
               }
             }
@@ -237,11 +282,41 @@ class Parser {
         this.pos = saved;
       }
 
+      // Global Servo/String/Stepper declarations: Servo myservo; String s = "x"; Stepper s(200,8,9,10,11);
+      if (this.check('ident', 'Servo') || this.check('ident', 'String') || this.check('ident', 'Stepper')) {
+        const decl = this.parseClassVarDecl();
+        this.globalDecls.push(decl);
+        continue;
+      }
+
+      // Global variable declarations: int x = 5;
+      if (this.check('ident') && ['int', 'long', 'float', 'bool', 'unsigned', 'byte', 'char', 'boolean', 'double', 'short', 'word', 'size_t'].includes(this.peek().value)) {
+        const saved = this.pos;
+        // Peek ahead to see if this is a variable (not function)
+        this.advance(); // skip type
+        if (this.check('ident') && ['int', 'long', 'char', 'short'].includes(this.peek().value)) {
+          this.advance(); // skip second type word
+        }
+        if (this.check('ident')) {
+          const nextSaved = this.pos;
+          this.advance(); // skip name
+          if (this.check('op', '=') || this.check('semi') || this.check('bracket', '[')) {
+            // It's a global variable declaration
+            this.pos = saved;
+            const decl = this.parseVarDecl();
+            this.globalDecls.push(decl);
+            continue;
+          }
+          this.pos = nextSaved;
+        }
+        this.pos = saved;
+      }
+
       this.advance();
     }
   }
 
-  getUserFunctions(): Map<string, ASTNode> { return this.userFunctions; }
+  getUserFunctions(): Map<string, { params: string[]; body: ASTNode }> { return this.userFunctions; }
   getDefines(): Map<string, number> { return this.defines; }
 
   // ─── Helpers ─────────────────────────────
@@ -307,9 +382,29 @@ class Parser {
     // for
     if (this.check('ident', 'for')) return this.parseFor();
 
+    // switch
+    if (this.check('ident', 'switch')) return this.parseSwitch();
+
+    // do...while
+    if (this.check('ident', 'do')) return this.parseDoWhile();
+
+    // break
+    if (this.check('ident', 'break')) { this.advance(); this.skipSemi(); return { type: 'break' }; }
+
+    // continue
+    if (this.check('ident', 'continue')) { this.advance(); this.skipSemi(); return { type: 'continue' }; }
+
+    // return
+    if (this.check('ident', 'return')) return this.parseReturn();
+
     // Variable declaration: int/long/float/bool/unsigned/byte name = expr;
     if (this.check('ident') && ['int', 'long', 'float', 'bool', 'unsigned', 'byte', 'char', 'boolean', 'double', 'short', 'word', 'size_t'].includes(this.peek().value)) {
       return this.parseVarDecl();
+    }
+
+    // Servo/String/Stepper declaration at statement level
+    if (this.check('ident', 'Servo') || this.check('ident', 'String') || this.check('ident', 'Stepper')) {
+      return this.parseClassVarDecl();
     }
 
     // const type name = value;
@@ -347,6 +442,33 @@ class Parser {
       this.advance(); // skip second type word
     }
     const name = this.expect('ident').value;
+
+    // Array declaration: int arr[] = {1,2,3}; or int arr[3];
+    if (this.check('bracket', '[')) {
+      this.advance(); // skip [
+      // Optional size
+      if (!this.check('bracket', ']')) {
+        this.parseExpression(); // skip size expression
+      }
+      this.expect('bracket', ']');
+      if (this.check('op', '=')) {
+        this.advance(); // skip =
+        if (this.check('brace', '{')) {
+          this.advance(); // skip {
+          const elements: ASTNode[] = [];
+          while (!this.check('brace', '}') && this.pos < this.tokens.length) {
+            elements.push(this.parseExpression());
+            if (this.check('comma')) this.advance();
+          }
+          this.expect('brace', '}');
+          this.skipSemi();
+          return { type: 'arrayDecl', name, elements };
+        }
+      }
+      this.skipSemi();
+      return { type: 'arrayDecl', name, elements: [] };
+    }
+
     let value: ASTNode = { type: 'number', value: 0 };
     if (this.check('op', '=')) {
       this.advance();
@@ -354,6 +476,38 @@ class Parser {
     }
     this.skipSemi();
     return { type: 'varDecl', name, value };
+  }
+
+  private parseClassVarDecl(): ASTNode {
+    const className = this.advance().value; // 'Servo', 'String', or 'Stepper'
+    const varName = this.expect('ident').value;
+    if (className === 'Servo') {
+      this.skipSemi();
+      return { type: 'varDecl', name: varName, value: { type: 'string', value: '__servo__' } };
+    }
+    if (className === 'Stepper') {
+      this.expect('paren', '(');
+      const steps = this.parseExpression();
+      this.expect('comma');
+      const p1 = this.parseExpression();
+      this.expect('comma');
+      const p2 = this.parseExpression();
+      this.expect('comma');
+      const p3 = this.parseExpression();
+      this.expect('comma');
+      const p4 = this.parseExpression();
+      this.expect('paren', ')');
+      this.skipSemi();
+      return { type: 'varDecl', name: varName, value: { type: 'stepperInit', steps, p1, p2, p3, p4 } };
+    }
+    // String
+    let value: ASTNode = { type: 'string', value: '' };
+    if (this.check('op', '=')) {
+      this.advance();
+      value = this.parseExpression();
+    }
+    this.skipSemi();
+    return { type: 'varDecl', name: varName, value };
   }
 
   private parseIf(): ASTNode {
@@ -411,6 +565,68 @@ class Parser {
     return { type: 'for', init, condition, update, body };
   }
 
+  private parseSwitch(): ASTNode {
+    this.expect('ident', 'switch');
+    this.expect('paren', '(');
+    const expr = this.parseExpression();
+    this.expect('paren', ')');
+    this.expect('brace', '{');
+
+    const cases: Array<{ values: ASTNode[]; body: ASTNode[] }> = [];
+    let defaultBody: ASTNode[] = [];
+
+    while (!this.check('brace', '}') && this.pos < this.tokens.length) {
+      if (this.check('ident', 'case')) {
+        const values: ASTNode[] = [];
+        // Collect consecutive case labels
+        while (this.check('ident', 'case')) {
+          this.advance(); // skip 'case'
+          values.push(this.parseExpression());
+          this.expect('colon');
+        }
+        const body: ASTNode[] = [];
+        while (!this.check('ident', 'case') && !this.check('ident', 'default') && !this.check('brace', '}') && this.pos < this.tokens.length) {
+          const stmt = this.parseStatement();
+          if (stmt.type !== 'noop') body.push(stmt);
+        }
+        cases.push({ values, body });
+      } else if (this.check('ident', 'default')) {
+        this.advance(); // skip 'default'
+        this.expect('colon');
+        while (!this.check('ident', 'case') && !this.check('brace', '}') && this.pos < this.tokens.length) {
+          const stmt = this.parseStatement();
+          if (stmt.type !== 'noop') defaultBody.push(stmt);
+        }
+      } else {
+        this.advance(); // skip unknown
+      }
+    }
+    this.expect('brace', '}');
+    return { type: 'switch', expr, cases, defaultBody };
+  }
+
+  private parseDoWhile(): ASTNode {
+    this.expect('ident', 'do');
+    const body = this.check('brace', '{') ? this.parseBlock() : this.parseStatement();
+    this.expect('ident', 'while');
+    this.expect('paren', '(');
+    const condition = this.parseExpression();
+    this.expect('paren', ')');
+    this.skipSemi();
+    return { type: 'doWhile', condition, body };
+  }
+
+  private parseReturn(): ASTNode {
+    this.expect('ident', 'return');
+    if (this.check('semi')) {
+      this.advance();
+      return { type: 'return', value: null };
+    }
+    const value = this.parseExpression();
+    this.skipSemi();
+    return { type: 'return', value };
+  }
+
   // ─── Expression Parsing (Pratt / precedence climbing) ─────
 
   parseExpression(): ASTNode {
@@ -419,10 +635,26 @@ class Parser {
 
   private parseAssignment(): ASTNode {
     const left = this.parseOr();
+
+    // Ternary operator: expr ? a : b
+    if (this.check('question')) {
+      this.advance(); // skip ?
+      const consequent = this.parseAssignment();
+      this.expect('colon');
+      const alternate = this.parseAssignment();
+      return { type: 'ternary', condition: left, consequent, alternate };
+    }
+
     if (this.check('op', '=') && left.type === 'identifier') {
       this.advance();
       const value = this.parseAssignment();
       return { type: 'assign', name: left.name, value };
+    }
+    // Array assignment: arr[i] = val
+    if (this.check('op', '=') && left.type === 'arrayAccess') {
+      this.advance();
+      const value = this.parseAssignment();
+      return { type: 'arrayAssign', name: left.name, index: left.index, value };
     }
     if (left.type === 'identifier') {
       const compoundOps = ['+=', '-=', '*=', '/='];
@@ -524,6 +756,32 @@ class Parser {
   private parsePostfix(): ASTNode {
     let node = this.parsePrimary();
 
+    // Array access: name[expr]
+    while (node.type === 'identifier' && this.check('bracket', '[')) {
+      this.advance(); // skip [
+      const index = this.parseExpression();
+      this.expect('bracket', ']');
+      node = { type: 'arrayAccess', name: node.name, index };
+    }
+
+    // Method call: name.method(args) — for object variables like Servo
+    if (node.type === 'identifier' && this.check('dot')) {
+      this.advance(); // skip .
+      const method = this.advance().value; // method name
+      if (this.check('paren', '(')) {
+        this.advance(); // skip (
+        const args: ASTNode[] = [];
+        while (!this.check('paren', ')') && this.pos < this.tokens.length) {
+          args.push(this.parseExpression());
+          if (this.check('comma')) this.advance();
+        }
+        this.expect('paren', ')');
+        return { type: 'methodCall', object: node.name, method, args };
+      }
+      // Property access (no args) — treat as method call with no args
+      return { type: 'methodCall', object: node.name, method, args: [] };
+    }
+
     // Post-increment/decrement
     if (node.type === 'identifier' && (this.check('op', '++') || this.check('op', '--'))) {
       const op = this.advance().value === '++' ? '+=' : '-=';
@@ -544,9 +802,26 @@ class Parser {
       return { type: 'string', value: this.advance().value };
     }
 
-    // Parenthesized expression
+    // Parenthesized expression or type cast
     if (this.check('paren', '(')) {
-      this.advance();
+      // Check for type cast: (int)expr, (float)expr, (byte)expr, (long)expr, (char)expr
+      const saved = this.pos;
+      this.advance(); // skip (
+      if (this.check('ident') && ['int', 'float', 'byte', 'long', 'char', 'unsigned', 'double', 'short', 'boolean'].includes(this.peek().value)) {
+        const castType = this.advance().value;
+        if (this.check('paren', ')')) {
+          this.advance(); // skip )
+          const expr = this.parseUnary();
+          // Apply cast
+          if (castType === 'int' || castType === 'long' || castType === 'byte' || castType === 'short' || castType === 'char') {
+            return { type: 'call', name: '__castInt', args: [expr] };
+          }
+          return expr; // float/double/unsigned — no runtime change
+        }
+      }
+      // Not a cast, backtrack
+      this.pos = saved;
+      this.advance(); // skip (
       const expr = this.parseExpression();
       this.expect('paren', ')');
       return expr;
@@ -571,7 +846,26 @@ class Parser {
       if (name === 'A4') return { type: 'number', value: 18 };
       if (name === 'A5') return { type: 'number', value: 19 };
 
-      // Serial.print / Serial.println / Serial.begin
+      // Servo class declaration: Servo myservo; → treat as variable declaration
+      if (name === 'Servo' && this.check('ident')) {
+        const servoName = this.advance().value;
+        this.skipSemi();
+        return { type: 'varDecl', name: servoName, value: { type: 'string', value: '__servo__' } };
+      }
+
+      // String class declaration: String s = "hello";
+      if (name === 'String' && this.check('ident')) {
+        const varName = this.advance().value;
+        let value: ASTNode = { type: 'string', value: '' };
+        if (this.check('op', '=')) {
+          this.advance();
+          value = this.parseExpression();
+        }
+        this.skipSemi();
+        return { type: 'varDecl', name: varName, value };
+      }
+
+      // Serial.print / Serial.println / Serial.begin / Serial.available / Serial.read / etc.
       if (name === 'Serial' && this.check('dot')) {
         this.advance(); // skip .
         const method = this.advance().value;
@@ -583,6 +877,20 @@ class Parser {
         }
         this.expect('paren', ')');
         return { type: 'call', name: `Serial.${method}`, args };
+      }
+
+      // Wire.begin / Wire.beginTransmission / Wire.write / Wire.endTransmission / Wire.requestFrom / Wire.read
+      if (name === 'Wire' && this.check('dot')) {
+        this.advance(); // skip .
+        const method = this.advance().value;
+        this.expect('paren', '(');
+        const args: ASTNode[] = [];
+        while (!this.check('paren', ')') && this.pos < this.tokens.length) {
+          args.push(this.parseExpression());
+          if (this.check('comma')) this.advance();
+        }
+        this.expect('paren', ')');
+        return { type: 'call', name: `Wire.${method}`, args };
       }
 
       // Function call
@@ -650,40 +958,97 @@ const MAX_LOOP_ITERATIONS = 100_000;
 export class SketchInterpreter {
   private setupAST: ASTNode = { type: 'block', body: [] };
   private loopAST: ASTNode = { type: 'block', body: [] };
-  private userFunctions = new Map<string, ASTNode>();
-  private variables = new Map<string, number>();
+  private userFunctions = new Map<string, { params: string[]; body: ASTNode }>();
+  private variables = new Map<string, number | string>();
+  private arrays = new Map<string, (number | string)[]>();
+  private callStack: Array<Map<string, number | string>> = [];
   private setupDone = false;
   private setupIndex = 0;
   private loopIndex = 0;
   private delayRemaining = 0;
   private running = false;
   private elapsedMs = 0;
+  private breakFlag = false;
+  private continueFlag = false;
+  private returnValue: number | string | null = null;
+  private returnFlag = false;
+  // Servo state
+  private servoAngles = new Map<string, number>();
+  private servoPins = new Map<string, number>();
+
+  // Stepper state: stepsPerRev, pins [4], currentRpm, currentStep (phase index 0–7)
+  private stepperObjects = new Map<string, { stepsPerRev: number; pins: number[]; currentRpm: number; currentStep: number }>();
+
+  // Wire/I2C state
+  private wireTxBuffer: number[] = [];
+  private wireTargetAddr = 0;
+  private wireRxBuffer: number[] = [];
+  private wireRxIndex = 0;
+
+  // Serial input buffer (bidirectional)
+  private serialInputBuffer = '';
 
   constructor(private callbacks: SketchCallbacks) {}
+
+  private reportError(message: string, severity: 'error' | 'warning' = 'error'): void {
+    this.callbacks.onError?.(message, severity);
+  }
 
   parse(source: string): void {
     this.setupAST = { type: 'block', body: [] };
     this.loopAST = { type: 'block', body: [] };
     this.userFunctions.clear();
     this.variables.clear();
+    this.arrays.clear();
+    this.callStack = [];
     this.setupDone = false;
     this.setupIndex = 0;
     this.loopIndex = 0;
     this.delayRemaining = 0;
     this.elapsedMs = 0;
+    this.breakFlag = false;
+    this.continueFlag = false;
+    this.returnValue = null;
+    this.returnFlag = false;
+    this.servoAngles.clear();
+    this.servoPins.clear();
+    this.stepperObjects.clear();
+    this.wireTxBuffer = [];
+    this.wireTargetAddr = 0;
+    this.wireRxBuffer = [];
+    this.wireRxIndex = 0;
+    this.serialInputBuffer = '';
 
     // Preprocess (#define substitution)
     const { cleaned, defines } = preprocess(source);
 
     // Tokenize
     const tokens = tokenize(cleaned);
+    if (tokens.length === 0) {
+      this.reportError('Empty sketch — nothing to execute');
+      this.running = false;
+      return;
+    }
 
     // Parse
     const parser = new Parser(tokens);
-    parser.parse();
+    try {
+      parser.parse();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.reportError(`Parse error: ${msg}`);
+      this.running = false;
+      return;
+    }
     this.setupAST = parser.setupAST;
     this.loopAST = parser.loopAST;
     this.userFunctions = parser.getUserFunctions();
+
+    if (this.setupAST.type === 'block' && this.setupAST.body.length === 0 &&
+        this.loopAST.type === 'block' && this.loopAST.body.length === 0 &&
+        this.userFunctions.size === 0 && parser.globalDecls.length === 0) {
+      this.reportError('No setup() or loop() function found in sketch', 'warning');
+    }
 
     // Load defines as initial constants
     for (const [name, value] of defines) {
@@ -692,6 +1057,11 @@ export class SketchInterpreter {
     }
     for (const [name, value] of parser.getDefines()) {
       this.variables.set(name, value);
+    }
+
+    // Execute global declarations (Servo, String, global variables)
+    for (const decl of parser.globalDecls) {
+      this.executeNode(decl);
     }
 
     this.running = true;
@@ -746,6 +1116,25 @@ export class SketchInterpreter {
     this.running = false;
     this.elapsedMs = 0;
     this.variables.clear();
+    this.arrays.clear();
+    this.callStack = [];
+    this.breakFlag = false;
+    this.continueFlag = false;
+    this.returnValue = null;
+    this.returnFlag = false;
+    this.servoAngles.clear();
+    this.servoPins.clear();
+    this.stepperObjects.clear();
+    this.wireTxBuffer = [];
+    this.wireTargetAddr = 0;
+    this.wireRxBuffer = [];
+    this.wireRxIndex = 0;
+    this.serialInputBuffer = '';
+  }
+
+  /** Inject user-typed text into the serial input buffer for Serial.read/parseInt/etc. */
+  feedSerialInput(text: string): void {
+    this.serialInputBuffer += text;
   }
 
   get isRunning(): boolean {
@@ -780,6 +1169,8 @@ export class SketchInterpreter {
    * Execute a single AST node. Returns true if execution hit a delay.
    */
   private executeNode(node: ASTNode): boolean {
+    if (this.breakFlag || this.continueFlag || this.returnFlag) return false;
+
     switch (node.type) {
       case 'noop':
         return false;
@@ -788,25 +1179,42 @@ export class SketchInterpreter {
         for (const stmt of node.body) {
           const hit = this.executeNode(stmt);
           if (hit) return true;
+          if (this.breakFlag || this.continueFlag || this.returnFlag) return false;
         }
         return false;
 
-      case 'varDecl':
-        this.variables.set(node.name, this.evaluate(node.value));
+      case 'varDecl': {
+        if (node.value.type === 'stepperInit') {
+          const steps = this.evaluate(node.value.steps);
+          const p1 = this.evaluate(node.value.p1);
+          const p2 = this.evaluate(node.value.p2);
+          const p3 = this.evaluate(node.value.p3);
+          const p4 = this.evaluate(node.value.p4);
+          this.stepperObjects.set(node.name, {
+            stepsPerRev: steps,
+            pins: [p1, p2, p3, p4],
+            currentRpm: 0,
+            currentStep: 0,
+          });
+          this.setVar(node.name, '__stepper__');
+        } else {
+          this.setVar(node.name, this.evaluateAny(node.value));
+        }
         return false;
+      }
 
       case 'assign':
-        this.variables.set(node.name, this.evaluate(node.value));
+        this.setVar(node.name, this.evaluateAny(node.value));
         return false;
 
       case 'compoundAssign': {
-        const current = this.variables.get(node.name) ?? 0;
+        const current = this.getVarNum(node.name);
         const val = this.evaluate(node.value);
         switch (node.op) {
-          case '+=': this.variables.set(node.name, current + val); break;
-          case '-=': this.variables.set(node.name, current - val); break;
-          case '*=': this.variables.set(node.name, current * val); break;
-          case '/=': this.variables.set(node.name, val !== 0 ? current / val : 0); break;
+          case '+=': this.setVar(node.name, current + val); break;
+          case '-=': this.setVar(node.name, current - val); break;
+          case '*=': this.setVar(node.name, current * val); break;
+          case '/=': this.setVar(node.name, val !== 0 ? current / val : 0); break;
           default: break;
         }
         return false;
@@ -833,7 +1241,10 @@ export class SketchInterpreter {
         let iterations = 0;
         while (this.evaluate(node.condition) && iterations < MAX_LOOP_ITERATIONS) {
           const hit = this.executeNode(node.body);
-          if (hit) return true; // delay inside while — NOTE: won't resume correctly inside the while, but acceptable for Phase 2
+          if (hit) return true;
+          if (this.breakFlag) { this.breakFlag = false; break; }
+          if (this.continueFlag) { this.continueFlag = false; }
+          if (this.returnFlag) return false;
           iterations++;
         }
         return false;
@@ -845,14 +1256,101 @@ export class SketchInterpreter {
         while ((node.condition ? this.evaluate(node.condition) : 1) && iterations < MAX_LOOP_ITERATIONS) {
           const hit = this.executeNode(node.body);
           if (hit) return true;
+          if (this.breakFlag) { this.breakFlag = false; break; }
+          if (this.continueFlag) { this.continueFlag = false; }
+          if (this.returnFlag) return false;
           if (node.update) this.executeNode(node.update);
           iterations++;
         }
         return false;
       }
 
-      case 'call':
+      case 'doWhile': {
+        let iterations = 0;
+        do {
+          const hit = this.executeNode(node.body);
+          if (hit) return true;
+          if (this.breakFlag) { this.breakFlag = false; break; }
+          if (this.continueFlag) { this.continueFlag = false; }
+          if (this.returnFlag) return false;
+          iterations++;
+        } while (this.evaluate(node.condition) && iterations < MAX_LOOP_ITERATIONS);
+        return false;
+      }
+
+      case 'switch': {
+        const val = this.evaluate(node.expr);
+        let matched = false;
+        for (const c of node.cases) {
+          if (!matched) {
+            for (const cv of c.values) {
+              if (this.evaluate(cv) === val) { matched = true; break; }
+            }
+          }
+          if (matched) {
+            for (const stmt of c.body) {
+              const hit = this.executeNode(stmt);
+              if (hit) return true;
+              if (this.breakFlag) { this.breakFlag = false; return false; }
+              if (this.returnFlag) return false;
+            }
+          }
+        }
+        if (!matched) {
+          for (const stmt of node.defaultBody) {
+            const hit = this.executeNode(stmt);
+            if (hit) return true;
+            if (this.breakFlag) { this.breakFlag = false; return false; }
+            if (this.returnFlag) return false;
+          }
+        }
+        return false;
+      }
+
+      case 'break':
+        this.breakFlag = true;
+        return false;
+
+      case 'continue':
+        this.continueFlag = true;
+        return false;
+
+      case 'return': {
+        if (node.value) {
+          this.returnValue = this.evaluateAny(node.value);
+        }
+        this.returnFlag = true;
+        return false;
+      }
+
+      case 'arrayDecl': {
+        const elements = node.elements.map(e => this.evaluateAny(e));
+        this.arrays.set(node.name, elements);
+        return false;
+      }
+
+      case 'arrayAssign': {
+        const arr = this.arrays.get(node.name) ?? [];
+        const idx = Math.floor(this.evaluate(node.index));
+        const val = this.evaluateAny(node.value);
+        while (arr.length <= idx) arr.push(0);
+        arr[idx] = val;
+        this.arrays.set(node.name, arr);
+        return false;
+      }
+
+      case 'call': {
+        if (node.name === 'delayMicroseconds') {
+          const us = this.evaluate(node.args[0]);
+          this.delayRemaining = us / 1000 + (this.delayRemaining < 0 ? this.delayRemaining : 0);
+          if (this.delayRemaining > 0) return true;
+        }
         this.evaluateCall(node.name, node.args);
+        return false;
+      }
+
+      case 'methodCall':
+        this.evaluateMethodCall(node.object, node.method, node.args);
         return false;
 
       // Expression statements (like bare function calls)
@@ -861,8 +1359,107 @@ export class SketchInterpreter {
       case 'number':
       case 'string':
       case 'identifier':
-        this.evaluate(node);
+      case 'ternary':
+      case 'arrayAccess':
+      case 'arrayLiteral':
+        this.evaluateAny(node);
         return false;
+
+      default:
+        return false;
+    }
+  }
+
+  // ─── Variable helpers for multi-type support ──────────────
+
+  private getVar(name: string): number | string {
+    // Search call stack first (scoped variables)
+    for (let i = this.callStack.length - 1; i >= 0; i--) {
+      if (this.callStack[i].has(name)) return this.callStack[i].get(name)!;
+    }
+    return this.variables.get(name) ?? 0;
+  }
+
+  private getVarNum(name: string): number {
+    const v = this.getVar(name);
+    return typeof v === 'number' ? v : parseFloat(v) || 0;
+  }
+
+  private getVarStr(name: string): string {
+    const v = this.getVar(name);
+    return typeof v === 'string' ? v : String(v);
+  }
+
+  private setVar(name: string, value: number | string): void {
+    // Set in top call stack frame if it exists there, else global
+    for (let i = this.callStack.length - 1; i >= 0; i--) {
+      if (this.callStack[i].has(name)) {
+        this.callStack[i].set(name, value);
+        return;
+      }
+    }
+    this.variables.set(name, value);
+  }
+
+  /**
+   * Evaluate an expression and return any type (number or string).
+   */
+  private evaluateAny(node: ASTNode): number | string {
+    switch (node.type) {
+      case 'number': return node.value;
+      case 'string': return node.value;
+      case 'identifier': return this.getVar(node.name);
+
+      case 'binary': {
+        // String concatenation for +
+        if (node.op === '+') {
+          const l = this.evaluateAny(node.left);
+          const r = this.evaluateAny(node.right);
+          if (typeof l === 'string' || typeof r === 'string') {
+            return String(l) + String(r);
+          }
+          return (l as number) + (r as number);
+        }
+        return this.evaluate(node);
+      }
+
+      case 'ternary': {
+        const cond = this.evaluate(node.condition);
+        return cond ? this.evaluateAny(node.consequent) : this.evaluateAny(node.alternate);
+      }
+
+      case 'arrayAccess': {
+        const arr = this.arrays.get(node.name);
+        if (!arr) return 0;
+        const idx = Math.floor(this.evaluate(node.index));
+        return arr[idx] ?? 0;
+      }
+
+      case 'arrayLiteral': {
+        // Return first element or 0
+        return node.elements.length > 0 ? this.evaluateAny(node.elements[0]) : 0;
+      }
+
+      case 'call':
+        return this.evaluateCallAny(node.name, node.args);
+
+      case 'methodCall':
+        return this.evaluateMethodCall(node.object, node.method, node.args);
+
+      case 'assign': {
+        const val = this.evaluateAny(node.value);
+        this.setVar(node.name, val);
+        return val;
+      }
+
+      case 'varDecl': {
+        const val = this.evaluateAny(node.value);
+        this.setVar(node.name, val);
+        return val;
+      }
+
+      default:
+        return this.evaluate(node);
     }
   }
 
@@ -873,7 +1470,20 @@ export class SketchInterpreter {
     switch (node.type) {
       case 'number': return node.value;
       case 'string': return 0; // Strings evaluate to 0 in numeric context
-      case 'identifier': return this.variables.get(node.name) ?? 0;
+      case 'identifier': return this.getVarNum(node.name);
+
+      case 'ternary': {
+        const cond = this.evaluate(node.condition);
+        return cond ? this.evaluate(node.consequent) : this.evaluate(node.alternate);
+      }
+
+      case 'arrayAccess': {
+        const arr = this.arrays.get(node.name);
+        if (!arr) return 0;
+        const idx = Math.floor(this.evaluate(node.index));
+        const val = arr[idx] ?? 0;
+        return typeof val === 'number' ? val : parseFloat(val) || 0;
+      }
 
       case 'binary': {
         const l = this.evaluate(node.left);
@@ -913,11 +1523,11 @@ export class SketchInterpreter {
 
       case 'assign':
         const aVal = this.evaluate(node.value);
-        this.variables.set(node.name, aVal);
+        this.setVar(node.name, aVal);
         return aVal;
 
       case 'compoundAssign': {
-        const current = this.variables.get(node.name) ?? 0;
+        const current = this.getVarNum(node.name);
         const val = this.evaluate(node.value);
         let result: number;
         switch (node.op) {
@@ -927,16 +1537,19 @@ export class SketchInterpreter {
           case '/=': result = val !== 0 ? current / val : 0; break;
           default: result = current;
         }
-        this.variables.set(node.name, result);
+        this.setVar(node.name, result);
         return result;
       }
 
       case 'call':
         return this.evaluateCall(node.name, node.args);
 
+      case 'methodCall':
+        return this.toNumber(this.evaluateMethodCall(node.object, node.method, node.args));
+
       case 'varDecl':
         const dVal = this.evaluate(node.value);
-        this.variables.set(node.name, dVal);
+        this.setVar(node.name, dVal);
         return dVal;
 
       default: return 0;
@@ -948,7 +1561,34 @@ export class SketchInterpreter {
    */
   private evaluateString(node: ASTNode): string {
     if (node.type === 'string') return node.value;
+    if (node.type === 'identifier') {
+      const v = this.getVar(node.name);
+      return typeof v === 'string' ? v : String(v);
+    }
+    if (node.type === 'binary' && node.op === '+') {
+      return String(this.evaluateAny(node.left)) + String(this.evaluateAny(node.right));
+    }
+    if (node.type === 'call' && (node.name === 'Serial.readString' || node.name === 'Serial.readStringUntil')) {
+      return this.evaluateCallAny(node.name, node.args) as string;
+    }
     return String(this.evaluate(node));
+  }
+
+  private toNumber(v: number | string): number {
+    return typeof v === 'number' ? v : parseFloat(v) || 0;
+  }
+
+  private serialReadString(): string {
+    const val = this.serialInputBuffer;
+    this.serialInputBuffer = '';
+    return val;
+  }
+
+  private serialReadStringUntil(delim: string): string {
+    const idx = this.serialInputBuffer.indexOf(delim);
+    const val = idx >= 0 ? this.serialInputBuffer.slice(0, idx) : this.serialInputBuffer;
+    this.serialInputBuffer = idx >= 0 ? this.serialInputBuffer.slice(idx + 1) : '';
+    return val;
   }
 
   /**
@@ -993,6 +1633,17 @@ export class SketchInterpreter {
       case 'millis':
         return Math.floor(this.elapsedMs);
 
+      case 'micros':
+        return Math.floor(this.elapsedMs * 1000);
+
+      case 'randomSeed':
+        // No-op in simulation; randomSeed sets the RNG seed
+        return 0;
+
+      case 'delayMicroseconds':
+        // Handled in executeNode to support blocking
+        return 0;
+
       case 'map': {
         const val = this.evaluate(args[0]);
         const fromLow = this.evaluate(args[1]);
@@ -1036,14 +1687,282 @@ export class SketchInterpreter {
         return 0;
       }
 
-      default: {
-        // User-defined function
-        const fn = this.userFunctions.get(name);
-        if (fn) {
-          this.executeNode(fn);
+      case 'Serial.available':
+        return this.serialInputBuffer.length;
+
+      case 'Serial.read': {
+        if (this.serialInputBuffer.length === 0) return -1;
+        const ch = this.serialInputBuffer[0];
+        this.serialInputBuffer = this.serialInputBuffer.slice(1);
+        return ch.charCodeAt(0);
+      }
+
+      case 'Serial.parseInt': {
+        const s = this.serialInputBuffer;
+        const match = s.match(/^\s*(-?\d+)/);
+        if (!match) return 0;
+        const val = parseInt(match[1], 10);
+        this.serialInputBuffer = s.slice(match[0].length);
+        return val;
+      }
+
+      case 'Serial.parseFloat': {
+        const s = this.serialInputBuffer;
+        const match = s.match(/^\s*(-?\d+\.?\d*|-?\.\d+)/);
+        if (!match) return 0;
+        const val = parseFloat(match[1]);
+        this.serialInputBuffer = s.slice(match[0].length);
+        return val;
+      }
+
+      case 'Serial.readString': {
+        this.serialReadString();
+        return 0;
+      }
+
+      case 'Serial.readStringUntil': {
+        const delim = String.fromCharCode(this.evaluate(args[0]));
+        this.serialReadStringUntil(delim);
+        return 0;
+      }
+
+      case 'Wire.begin':
+        return 0;
+
+      case 'Wire.beginTransmission': {
+        this.wireTargetAddr = this.evaluate(args[0]);
+        this.wireTxBuffer = [];
+        return 0;
+      }
+
+      case 'Wire.write': {
+        const data = this.evaluate(args[0]);
+        this.wireTxBuffer.push(data & 0xff);
+        return 1;
+      }
+
+      case 'Wire.endTransmission': {
+        this.callbacks.onWireWrite?.(this.wireTargetAddr, [...this.wireTxBuffer]);
+        this.wireTxBuffer = [];
+        return 0;
+      }
+
+      case 'Wire.requestFrom': {
+        const addr = this.evaluate(args[0]);
+        const qty = this.evaluate(args[1]);
+        const data = this.callbacks.onWireRead?.(addr, qty);
+        if (data) {
+          this.wireRxBuffer = data;
+        } else {
+          // Stub: for MPU-6050 (0x68) return mock accel/gyro; else zeros
+          if (addr === 0x68) {
+            // MPU-6050 register layout: 0x3B-0x40 accel, 0x43-0x48 gyro (big-endian)
+            const mock: number[] = [];
+            for (let i = 0; i < qty; i++) mock.push((i * 17) & 0xff);
+            this.wireRxBuffer = mock;
+          } else {
+            this.wireRxBuffer = Array(qty).fill(0);
+          }
+        }
+        this.wireRxIndex = 0;
+        return qty;
+      }
+
+      case 'Wire.read': {
+        if (this.wireRxIndex >= this.wireRxBuffer.length) return -1;
+        return this.wireRxBuffer[this.wireRxIndex++];
+      }
+
+      case '__castInt':
+        return Math.trunc(this.evaluate(args[0]));
+
+      case 'tone': {
+        const pin = this.evaluate(args[0]);
+        const freq = this.evaluate(args[1]);
+        const dur = args.length > 2 ? this.evaluate(args[2]) : undefined;
+        this.callbacks.onTone?.(pin, freq, dur);
+        return 0;
+      }
+
+      case 'noTone': {
+        const pin = this.evaluate(args[0]);
+        this.callbacks.onNoTone?.(pin);
+        return 0;
+      }
+
+      case 'pulseIn': {
+        const pin = this.evaluate(args[0]);
+        const value = this.evaluate(args[1]);
+        const timeout = args.length > 2 ? this.evaluate(args[2]) : undefined;
+        return this.callbacks.onPulseIn?.(pin, value, timeout) ?? 0;
+      }
+
+      case 'String': {
+        // String() constructor — convert to string (return numeric)
+        return this.evaluate(args[0]);
+      }
+
+      case 'sizeof': {
+        if (args.length > 0 && args[0].type === 'identifier') {
+          const arr = this.arrays.get(args[0].name);
+          if (arr) return arr.length;
         }
         return 0;
       }
+
+      default: {
+        // User-defined function with parameters
+        const fn = this.userFunctions.get(name);
+        if (fn) {
+          const scope = new Map<string, number | string>();
+          for (let i = 0; i < fn.params.length; i++) {
+            scope.set(fn.params[i], i < args.length ? this.evaluateAny(args[i]) : 0);
+          }
+          this.callStack.push(scope);
+          this.returnFlag = false;
+          this.returnValue = null;
+          this.executeNode(fn.body);
+          this.callStack.pop();
+          const retVal = this.returnValue;
+          this.returnFlag = false;
+          this.returnValue = null;
+          return typeof retVal === 'number' ? retVal : (retVal !== null ? (parseFloat(retVal) || 0) : 0);
+        }
+        this.reportError(`Unknown function: ${name}()`);
+        return 0;
+      }
     }
+  }
+
+  /**
+   * evaluateCall variant that returns string or number (for evaluateAny)
+   */
+  private evaluateCallAny(name: string, args: ASTNode[]): number | string {
+    if (name === 'Serial.readString') return this.serialReadString();
+    if (name === 'Serial.readStringUntil') return this.serialReadStringUntil(String.fromCharCode(this.evaluate(args[0])));
+    const fn = this.userFunctions.get(name);
+    if (fn) {
+      const scope = new Map<string, number | string>();
+      for (let i = 0; i < fn.params.length; i++) {
+        scope.set(fn.params[i], i < args.length ? this.evaluateAny(args[i]) : 0);
+      }
+      this.callStack.push(scope);
+      this.returnFlag = false;
+      this.returnValue = null;
+      this.executeNode(fn.body);
+      this.callStack.pop();
+      const retVal = this.returnValue;
+      this.returnFlag = false;
+      this.returnValue = null;
+      return retVal ?? 0;
+    }
+    return this.evaluateCall(name, args);
+  }
+
+  /**
+   * Handle method calls on object variables (Servo, String, Stepper, etc.)
+   */
+  private evaluateMethodCall(objectName: string, method: string, args: ASTNode[]): number | string {
+    const objVal = this.getVar(objectName);
+
+    // Stepper methods
+    const stepper = this.stepperObjects.get(objectName);
+    if (stepper) {
+      switch (method) {
+        case 'setSpeed': {
+          const rpm = this.evaluate(args[0]);
+          stepper.currentRpm = rpm;
+          return 0;
+        }
+        case 'step': {
+          const n = Math.floor(this.evaluate(args[0]));
+          const dir = n >= 0 ? 1 : -1;
+          const absN = Math.abs(n);
+          // 4-phase full-step pattern: 1000, 0100, 0010, 0001
+          const PHASE = [
+            [1, 0, 0, 0],
+            [0, 1, 0, 0],
+            [0, 0, 1, 0],
+            [0, 0, 0, 1],
+          ];
+          for (let i = 0; i < absN; i++) {
+            const phase = ((stepper.currentStep % 4) + 4) % 4;
+            const pat = PHASE[phase];
+            for (let j = 0; j < 4; j++) {
+              this.callbacks.onDigitalWrite(stepper.pins[j], pat[j]);
+            }
+            stepper.currentStep += dir;
+          }
+          return 0;
+        }
+        default:
+          return 0;
+      }
+    }
+
+    // Servo methods
+    if (objVal === '__servo__' || this.servoPins.has(objectName)) {
+      switch (method) {
+        case 'attach': {
+          const pin = this.evaluate(args[0]);
+          this.servoPins.set(objectName, pin);
+          this.servoAngles.set(objectName, 90);
+          this.callbacks.onServoAttach?.(objectName, pin);
+          return 0;
+        }
+        case 'write': {
+          const angle = Math.max(0, Math.min(180, this.evaluate(args[0])));
+          this.servoAngles.set(objectName, angle);
+          this.callbacks.onServoWrite?.(objectName, angle);
+          return 0;
+        }
+        case 'read':
+          return this.servoAngles.get(objectName) ?? 90;
+        case 'detach':
+          this.servoPins.delete(objectName);
+          this.callbacks.onServoDetach?.(objectName);
+          return 0;
+        default:
+          return 0;
+      }
+    }
+
+    // String methods
+    if (typeof objVal === 'string') {
+      switch (method) {
+        case 'length':
+          return objVal.length;
+        case 'charAt': {
+          const idx = this.evaluate(args[0]);
+          return objVal.charAt(idx) || '';
+        }
+        case 'substring': {
+          const start = this.evaluate(args[0]);
+          const end = args.length > 1 ? this.evaluate(args[1]) : undefined;
+          return objVal.substring(start, end);
+        }
+        case 'indexOf': {
+          const search = this.evaluateString(args[0]);
+          return objVal.indexOf(search);
+        }
+        case 'toInt':
+          return parseInt(objVal, 10) || 0;
+        case 'toFloat':
+          return parseFloat(objVal) || 0;
+        case 'equals': {
+          const other = this.evaluateString(args[0]);
+          return objVal === other ? 1 : 0;
+        }
+        case 'concat': {
+          const other = this.evaluateString(args[0]);
+          this.setVar(objectName, objVal + other);
+          return 0;
+        }
+        default:
+          return 0;
+      }
+    }
+
+    return 0;
   }
 }

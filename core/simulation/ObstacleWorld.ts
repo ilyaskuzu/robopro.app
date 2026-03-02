@@ -11,6 +11,13 @@ export interface Obstacle {
     readonly radius: number;
 }
 
+export interface ObstacleCollisionResult {
+    readonly collided: boolean;
+    readonly normalX: number;
+    readonly normalZ: number;
+    readonly penetration: number;
+}
+
 export class ObstacleWorld {
     private obstacles: Obstacle[] = [];
 
@@ -28,6 +35,37 @@ export class ObstacleWorld {
 
     clear(): void {
         this.obstacles = [];
+    }
+
+    /**
+     * Circle-circle collision: treats the car as a circle at (cx, cz) with carRadius,
+     * and each obstacle as a circle at (ox, oz) with obs.radius.
+     * Returns the deepest penetrating obstacle's collision normal and depth.
+     */
+    checkCollision(cx: number, cz: number, carRadius: number): ObstacleCollisionResult {
+        let deepest: ObstacleCollisionResult = { collided: false, normalX: 0, normalZ: 0, penetration: 0 };
+        let maxPen = 0;
+
+        for (const obs of this.obstacles) {
+            const dx = cx - obs.x;
+            const dz = cz - obs.z;
+            const dist = Math.sqrt(dx * dx + dz * dz);
+            const minDist = carRadius + obs.radius;
+            const pen = minDist - dist;
+
+            if (pen > 0 && pen > maxPen) {
+                const invDist = dist > 1e-6 ? 1 / dist : 1;
+                maxPen = pen;
+                deepest = {
+                    collided: true,
+                    normalX: dx * invDist,
+                    normalZ: dz * invDist,
+                    penetration: pen,
+                };
+            }
+        }
+
+        return deepest;
     }
 
     /**

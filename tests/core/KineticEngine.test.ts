@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { KineticEngine } from '../../src/core/physics/KineticEngine';
-import type { IMotorSpec, ILoadSpec, IEnvironment } from '../../src/core/physics/interfaces/IKineticEngine';
+import { KineticEngine } from '../../core/physics/KineticEngine';
+import type { IMotorSpec, ILoadSpec, IEnvironment } from '../../core/physics/interfaces/IKineticEngine';
 
 const MOTOR: IMotorSpec = { stallTorque: 0.078, noLoadRpm: 200, nominalVoltage: 6, armatureResistance: 7.5, backEmfConstant: 6 / (200 * Math.PI / 30) };
 const LOAD: ILoadSpec = { mass: 0.5, wheelRadius: 0.033, staticFrictionCoeff: 0.05, kineticFrictionCoeff: 0.03 };

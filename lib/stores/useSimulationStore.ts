@@ -2,12 +2,19 @@ import { create } from 'zustand';
 import type { IKineticState } from '@/core/physics/interfaces/IKineticEngine';
 import type { RigidBodyState } from '@/core/physics/interfaces/IVehicleBody';
 import type { PinValueMap } from '@/core/components/interfaces/IComponent';
-import { SimulationLoop, type SimulationConfig, type SimulationSnapshot } from '@/core/simulation/SimulationLoop';
+import { SimulationLoop, type SimulationConfig, type SimulationSnapshot, type ComponentWire } from '@/core/simulation/SimulationLoop';
 import type { WiringGraph } from '@/core/simulation/WiringGraph';
+import type { CircuitError } from '@/core/simulation/CircuitValidator';
 import type { IMicrocontroller } from '@/core/mcu/interfaces/IMicrocontroller';
 import type { IComponent } from '@/core/components/interfaces/IComponent';
 import { SketchInterpreter, type SketchCallbacks } from '@/core/sketch/SketchInterpreter';
+import { ObstacleWorld } from '@/core/simulation/ObstacleWorld';
+import { LineTrack } from '@/core/simulation/LineTrack';
+import { FrictionMap } from '@/core/simulation/FrictionMap';
+import { WallWorld } from '@/core/simulation/WallWorld';
+import { TerrainMap } from '@/core/simulation/TerrainMap';
 import { useMcuStore } from './useMcuStore';
+import { useEnvironmentStore } from './useEnvironmentStore';
 
 export type RigidBodyStateWithWheels = RigidBodyState & { wheelAngleLeft: number; wheelAngleRight: number };
 
@@ -25,6 +32,31 @@ export interface MotionLogEntry {
 
 const MOTION_LOG_MAX = 3000;
 
+/**
+ * Fixed-size ring buffer for motion log entries.
+ * Avoids array copy on every tick (60 Hz).
+ */
+class MotionLogRingBuffer {
+  private buf: MotionLogEntry[] = [];
+  private head = 0;
+  private count = 0;
+  constructor(private readonly capacity = MOTION_LOG_MAX) {
+    this.buf = new Array(capacity);
+  }
+  push(entry: MotionLogEntry): void {
+    this.buf[this.head] = entry;
+    this.head = (this.head + 1) % this.capacity;
+    if (this.count < this.capacity) this.count++;
+  }
+  /** Returns entries in chronological order (oldest → newest). */
+  toArray(): MotionLogEntry[] {
+    if (this.count < this.capacity) return this.buf.slice(0, this.count);
+    return [...this.buf.slice(this.head), ...this.buf.slice(0, this.head)];
+  }
+  clear(): void { this.head = 0; this.count = 0; }
+  get length(): number { return this.count; }
+}
+
 export interface SimulationStoreState {
   isRunning: boolean;
   sessionId: number;
@@ -40,8 +72,17 @@ export interface SimulationStoreState {
   config: SimulationConfig | null;
   interpreter: SketchInterpreter | null;
   sketchSource: string;
+  obstacleWorld: ObstacleWorld;
+  lineTrack: LineTrack;
+  frictionMap: FrictionMap;
+  wallWorld: WallWorld;
+  terrainMap: TerrainMap;
+  /** @internal ring buffer backing motionLog — not exposed to subscribers */
+  _motionRing: MotionLogRingBuffer;
+  /** Circuit validation errors from the most recent play() attempt */
+  circuitErrors: CircuitError[];
 
-  initialize: (mcu: IMicrocontroller, components: Map<string, IComponent>, wiring: WiringGraph, config: SimulationConfig) => void;
+  initialize: (mcu: IMicrocontroller, components: Map<string, IComponent>, wiring: WiringGraph, config: SimulationConfig, componentWires?: readonly ComponentWire[]) => void;
   loadSketch: (source: string) => void;
   tick: () => void;
   play: () => void;
@@ -65,9 +106,32 @@ export const useSimulationStore = create<SimulationStoreState>((set, get) => ({
   config: null,
   interpreter: null,
   sketchSource: '',
+  obstacleWorld: new ObstacleWorld(),
+  lineTrack: new LineTrack(),
+  frictionMap: new FrictionMap(),
+  wallWorld: new WallWorld(),
+  terrainMap: new TerrainMap(),
+  _motionRing: new MotionLogRingBuffer(),
+  circuitErrors: [],
 
-  initialize: (mcu, components, wiring, config) => {
-    const loop = new SimulationLoop(mcu, components, wiring, config);
+  initialize: (mcu, components, wiring, config, componentWires) => {
+    const { obstacleWorld, lineTrack, frictionMap, wallWorld, terrainMap } = get();
+    const env = useEnvironmentStore.getState();
+    // Sync all environment data so physics matches the visible scene (presets + user-added)
+    wallWorld.clear();
+    for (const w of env.walls) wallWorld.addWall(w);
+    obstacleWorld.clear();
+    for (const o of env.obstacles) obstacleWorld.addObstacle({ x: o.x, z: o.z, radius: o.radius });
+    frictionMap.clear();
+    for (const z of env.frictionZones) frictionMap.addZone(z);
+    terrainMap.clear();
+    for (const z of env.terrainZones) terrainMap.addZone(z);
+
+    const loop = new SimulationLoop(
+      mcu, components, wiring, config,
+      obstacleWorld, lineTrack, frictionMap, wallWorld, terrainMap,
+      componentWires,
+    );
 
     const callbacks: SketchCallbacks = {
       onPinMode: (_pin, _mode) => { },
@@ -95,6 +159,10 @@ export const useSimulationStore = create<SimulationStoreState>((set, get) => ({
         const mcuPin = mcu.getPin(pin);
         return mcuPin ? Math.round(mcuPin.value * 1023) : 0;
       },
+      onError: (message, severity) => {
+        const prefix = severity === 'error' ? '[SKETCH ERROR]' : '[SKETCH WARNING]';
+        useMcuStore.getState().appendSerial(`${prefix} ${message}\n`);
+      },
     };
 
     const interpreter = new SketchInterpreter(callbacks);
@@ -117,7 +185,8 @@ export const useSimulationStore = create<SimulationStoreState>((set, get) => ({
     const stepsPerFrame = Math.max(1, Math.round(speed));
 
     for (let s = 0; s < stepsPerFrame; s++) {
-      if (interpreter?.isRunning) {
+      // Only tick interpreter if the system has power (battery assembled)
+      if (interpreter?.isRunning && simulationLoop.hasPowerSource) {
         interpreter.tick(dtMs);
       }
 
@@ -129,6 +198,9 @@ export const useSimulationStore = create<SimulationStoreState>((set, get) => ({
         for (const [id, state] of snapshot.kineticStates) kineticStates[id] = state;
         const componentOutputs: Record<string, PinValueMap> = {};
         for (const [id, outputs] of snapshot.componentOutputs) componentOutputs[id] = outputs;
+
+        // Sync MCU pin states so UI reflects live values
+        useMcuStore.getState().syncPinStates();
 
         set((prev) => {
           const tickCount = prev.tickCount + stepsPerFrame;
@@ -171,7 +243,8 @@ export const useSimulationStore = create<SimulationStoreState>((set, get) => ({
               motorR,
               phase,
             };
-            motionLog = [...prev.motionLog, entry].slice(-MOTION_LOG_MAX);
+            prev._motionRing.push(entry);
+            motionLog = prev._motionRing.toArray();
           }
           return {
             kineticStates,
@@ -188,9 +261,24 @@ export const useSimulationStore = create<SimulationStoreState>((set, get) => ({
   },
 
   play: () => {
-    const { interpreter, sketchSource } = get();
-    if (interpreter && sketchSource) {
-      interpreter.parse(sketchSource);
+    const { sketchSource, circuitErrors, simulationLoop } = get();
+    const appendSerial = useMcuStore.getState().appendSerial;
+
+    // No wired power source = nothing works (battery must exist AND V_OUT must be wired)
+    if (simulationLoop && !simulationLoop.hasPowerSource) {
+      appendSerial('[POWER] No wired battery — MCU has no power. Assemble a battery AND wire its V_OUT to the circuit.\n');
+    }
+
+    // Log circuit errors/warnings from the orchestrator's last validation
+    for (const err of circuitErrors) {
+      const prefix = err.severity === 'error' ? '[CIRCUIT ERROR]' : '[CIRCUIT WARNING]';
+      appendSerial(`${prefix} ${err.message}\n`);
+    }
+
+    // Parse sketch and start (interpreter won't tick without power, but parse is needed for when power is added)
+    const freshInterpreter = get().interpreter;
+    if (freshInterpreter && sketchSource) {
+      freshInterpreter.parse(sketchSource);
     }
     set({ isRunning: true });
   },
@@ -198,9 +286,10 @@ export const useSimulationStore = create<SimulationStoreState>((set, get) => ({
   pause: () => set({ isRunning: false }),
 
   reset: () => {
-    const { simulationLoop, interpreter } = get();
+    const { simulationLoop, interpreter, _motionRing } = get();
     simulationLoop?.reset();
     interpreter?.reset();
+    _motionRing.clear();
     set((prev) => ({
       isRunning: false,
       sessionId: prev.sessionId + 1,

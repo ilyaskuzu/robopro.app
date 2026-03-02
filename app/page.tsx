@@ -1,5 +1,5 @@
-import { SimulatorShell } from "@/components/layout/SimulatorShell";
+import { AppShell } from "@/components/layout/AppShell";
 
 export default function Home() {
-  return <SimulatorShell />;
+  return <AppShell />;
 }

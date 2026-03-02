@@ -84,4 +84,81 @@ describe('VehicleDynamics', () => {
     expect(s.v).toBeLessThan(vAfterThrust);
     expect(s.v).toBeGreaterThanOrEqual(0);
   });
+
+  it('uses spec tireFrictionCoeff instead of hardcoded 0.8', () => {
+    // Very low friction → less achievable force → lower velocity for same torque
+    const lowFriction: VehicleSpec = { ...SPEC, tireFrictionCoeff: 0.1 };
+    const defaultFriction: VehicleSpec = { ...SPEC, tireFrictionCoeff: 0.8 };
+    const vLow = new VehicleDynamics(lowFriction);
+    const vDef = new VehicleDynamics(defaultFriction);
+    const bigTorque = 0.1;
+    for (let i = 0; i < 60; i++) {
+      vLow.step(bigTorque, bigTorque, 1 / 60);
+      vDef.step(bigTorque, bigTorque, 1 / 60);
+    }
+    // Low friction caps force more → lower velocity
+    expect(vLow.getState().v).toBeLessThan(vDef.getState().v);
+  });
+
+  it('uses spec rotationalDamping', () => {
+    const highDamping: VehicleSpec = { ...SPEC, rotationalDamping: 20 };
+    const lowDamping: VehicleSpec = { ...SPEC, rotationalDamping: 0.1 };
+    const vHigh = new VehicleDynamics(highDamping);
+    const vLow = new VehicleDynamics(lowDamping);
+    // Give asymmetric torque then let go
+    for (let i = 0; i < 30; i++) {
+      vHigh.step(0.01, -0.01, 1 / 60);
+      vLow.step(0.01, -0.01, 1 / 60);
+    }
+    for (let i = 0; i < 60; i++) {
+      vHigh.step(0, 0, 1 / 60);
+      vLow.step(0, 0, 1 / 60);
+    }
+    // High damping → omega should be closer to zero
+    expect(Math.abs(vHigh.getState().omega)).toBeLessThan(Math.abs(vLow.getState().omega));
+  });
+
+  it('setFrictionQuery overrides spec friction', () => {
+    const v = new VehicleDynamics(SPEC);
+    v.setFrictionQuery(() => 0.01); // Almost no friction
+    const bigTorque = 0.1;
+    for (let i = 0; i < 60; i++) {
+      v.step(bigTorque, bigTorque, 1 / 60);
+    }
+    const sLow = v.getState().v;
+
+    const v2 = new VehicleDynamics(SPEC);
+    v2.setFrictionQuery(() => 1.5); // High friction
+    for (let i = 0; i < 60; i++) {
+      v2.step(bigTorque, bigTorque, 1 / 60);
+    }
+    expect(sLow).toBeLessThan(v2.getState().v);
+  });
+
+  it('setSlopeQuery adds gravity component', () => {
+    const v = new VehicleDynamics(SPEC);
+    // Downhill slope → positive gravity component → accelerates
+    v.setSlopeQuery(() => 2.0);
+    for (let i = 0; i < 60; i++) {
+      v.step(0, 0, 1 / 60); // No motor torque
+    }
+    // Should have moved forward from gravity alone
+    expect(v.getState().v).toBeGreaterThan(0);
+  });
+
+  it('resolveWallCollision pushes car out and cancels into-wall velocity', () => {
+    const v = new VehicleDynamics(SPEC);
+    // Drive forward
+    for (let i = 0; i < 30; i++) {
+      v.step(0.01, 0.01, 1 / 60);
+    }
+    const before = v.getState();
+    expect(before.v).toBeGreaterThan(0);
+
+    // Simulate wall collision: normal pointing in -X, car was heading +X (theta ≈ 0)
+    v.resolveWallCollision(-1, 0, -0.01, 0.065);
+    const after = v.getState();
+    // Car should have been pushed back (-X)
+    expect(after.x).toBeLessThan(before.x);
+  });
 });

@@ -1,1 +1,0 @@
-export { SimulationScene } from './SimulationScene';

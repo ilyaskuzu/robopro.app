@@ -1,7 +1,7 @@
 "use client";
 
 import Editor from "@monaco-editor/react";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { Upload } from "lucide-react";
 import { useMcuStore } from "@/lib/stores/useMcuStore";
 import { useSimulationStore } from "@/lib/stores/useSimulationStore";
@@ -40,16 +40,16 @@ void loop() {
   analogWrite(6, 0);
   delay(1000);
 
-  // --- PIVOT TURN LEFT (2000ms) ---
+  // --- PIVOT TURN LEFT (~90°) ---
   // Left wheel backward + Right wheel forward = pivot in place (turn left)
   // Left:  IN1=L, IN2=H (backward) | Right: IN3=H, IN4=L (forward)
   digitalWrite(7, LOW);
   digitalWrite(8, HIGH);
   digitalWrite(9, HIGH);
   digitalWrite(10, LOW);
-  analogWrite(5, 200);
-  analogWrite(6, 200);
-  delay(2000);
+  analogWrite(5, 49);
+  analogWrite(6, 49);
+  delay(455);
 
   // --- STOP (1000ms) ---
   analogWrite(5, 0);
@@ -59,13 +59,27 @@ void loop() {
 `;
 
 export function CodeEditorPanel() {
-  const [code, setCode] = useState(DEFAULT_SKETCH);
+  const storeSketch = useSimulationStore((s) => s.sketchSource);
+  const [code, setCode] = useState(storeSketch || DEFAULT_SKETCH);
   const appendSerial = useMcuStore((s) => s.appendSerial);
   const loadSketch = useSimulationStore((s) => s.loadSketch);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Debounced sketch parsing — 300ms after user stops typing
+  const debouncedLoadSketch = useCallback((source: string) => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => loadSketch(source), 300);
+  }, [loadSketch]);
+
+  // Cleanup debounce on unmount
+  useEffect(() => () => { if (debounceRef.current) clearTimeout(debounceRef.current); }, []);
+
+  // Sync editor with store (Presets/Load)
   useEffect(() => {
-    loadSketch(code);
-  }, [loadSketch, code]);
+    if (storeSketch !== undefined && storeSketch !== code) {
+      setCode(storeSketch);
+    }
+  }, [storeSketch]);
 
   const handleUpload = () => {
     loadSketch(code);
@@ -88,7 +102,7 @@ export function CodeEditorPanel() {
         <Editor
           defaultLanguage="cpp"
           value={code}
-          onChange={(v) => { setCode(v ?? ""); loadSketch(v ?? ""); }}
+          onChange={(v) => { setCode(v ?? ""); debouncedLoadSketch(v ?? ""); }}
           theme="vs-dark"
           options={{
             fontSize: 13,

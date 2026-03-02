@@ -4,40 +4,32 @@ import { useRef, useMemo } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { useSimulationStore } from "@/lib/stores/useSimulationStore";
+import { useMcuStore } from "@/lib/stores/useMcuStore";
+import { useProjectStore } from "@/lib/stores/useProjectStore";
 
-const WHEEL_RADIUS = 0.033;
-const WHEEL_WIDTH = 0.018;
-const AXLE_HALF_SPAN = 0.065;
-const AXLE_FRONT_X = 0.065;
-const AXLE_REAR_X = -0.065;
 const SPOKE_COUNT = 5;
 
 /**
  * Wheel built from a cylinder (tire) + disc hub + spokes.
- * Cylinder axis = Y by default. We rotate the whole group so axle is along Z.
- * Spinning the wheel = rotating around local Y (the cylinder axis).
+ * Dimensions adapt to the selected motor's wheel radius.
  */
-function Wheel() {
-  const spokeLen = WHEEL_RADIUS * 0.7;
+function Wheel({ radius, width }: { radius: number; width: number }) {
+  const spokeLen = radius * 0.7;
 
   return (
     <group>
-      {/* Tire cylinder */}
-      <mesh>
-        <cylinderGeometry args={[WHEEL_RADIUS, WHEEL_RADIUS, WHEEL_WIDTH, 24]} />
-        <meshStandardMaterial color="#1a1a1a" roughness={0.9} />
+      <mesh castShadow>
+        <cylinderGeometry args={[radius, radius, width, 24]} />
+        <meshStandardMaterial color="#263238" roughness={0.9} />
       </mesh>
-      {/* Rim ring (slightly smaller, slightly wider so it pokes out) */}
-      <mesh>
-        <cylinderGeometry args={[WHEEL_RADIUS - 0.004, WHEEL_RADIUS - 0.004, WHEEL_WIDTH + 0.001, 24]} />
-        <meshStandardMaterial color="#555555" metalness={0.4} roughness={0.5} />
+      <mesh castShadow>
+        <cylinderGeometry args={[radius - 0.004, radius - 0.004, width + 0.001, 24]} />
+        <meshStandardMaterial color="#455a64" metalness={0.4} roughness={0.5} />
       </mesh>
-      {/* Hub disc */}
       <mesh>
-        <cylinderGeometry args={[0.008, 0.008, WHEEL_WIDTH + 0.002, 12]} />
-        <meshStandardMaterial color="#999999" metalness={0.7} roughness={0.3} />
+        <cylinderGeometry args={[0.008, 0.008, width + 0.002, 12]} />
+        <meshStandardMaterial color="#ffeb3b" metalness={0.3} roughness={0.4} />
       </mesh>
-      {/* Spokes (thin boxes radially in the XZ plane, perpendicular to Y axis) */}
       {Array.from({ length: SPOKE_COUNT }).map((_, i) => {
         const angle = (i / SPOKE_COUNT) * Math.PI * 2;
         const cx = Math.cos(angle) * spokeLen * 0.5;
@@ -45,7 +37,7 @@ function Wheel() {
         return (
           <mesh key={i} position={[cx, 0, cz]} rotation={[0, -angle, 0]}>
             <boxGeometry args={[spokeLen, 0.003, 0.003]} />
-            <meshStandardMaterial color="#aaaaaa" metalness={0.5} roughness={0.4} />
+            <meshStandardMaterial color="#ffeb3b" metalness={0.3} roughness={0.4} />
           </mesh>
         );
       })}
@@ -53,38 +45,38 @@ function Wheel() {
   );
 }
 
-function MotorBlock({ position }: { position: [number, number, number] }) {
+function MotorBlock({ position, motorDiameter, motorLength }: {
+  position: [number, number, number];
+  motorDiameter: number;
+  motorLength: number;
+}) {
+  const r = motorDiameter / 2;
   return (
     <group position={position}>
-      {/* Motor body -- axle along Z */}
       <mesh rotation={[Math.PI / 2, 0, 0]}>
-        <cylinderGeometry args={[0.013, 0.013, 0.028, 12]} />
+        <cylinderGeometry args={[r, r, motorLength, 12]} />
         <meshStandardMaterial color="#a0a0a0" metalness={0.7} roughness={0.3} />
       </mesh>
-      {/* Shaft */}
       <mesh rotation={[Math.PI / 2, 0, 0]}>
-        <cylinderGeometry args={[0.004, 0.004, 0.036, 8]} />
+        <cylinderGeometry args={[0.004, 0.004, motorLength + 0.008, 8]} />
         <meshStandardMaterial color="#666666" metalness={0.5} roughness={0.4} />
       </mesh>
     </group>
   );
 }
 
-function UltrasonicSensor({ position }: { position: [number, number, number] }) {
+function UltrasonicSensorMesh({ position }: { position: [number, number, number] }) {
   return (
     <group position={position}>
-      {/* PCB backing */}
       <mesh position={[0, 0, -0.006]}>
         <boxGeometry args={[0.008, 0.012, 0.018]} />
         <meshStandardMaterial color="#1565c0" roughness={0.5} />
       </mesh>
-      {/* Left transducer */}
-      <mesh position={[0, 0, 0.005]} rotation={[0, 0, 0]}>
+      <mesh position={[0, 0, 0.005]}>
         <cylinderGeometry args={[0.005, 0.005, 0.008, 10]} />
         <meshStandardMaterial color="#c0c0c0" metalness={0.6} roughness={0.3} />
       </mesh>
-      {/* Right transducer */}
-      <mesh position={[0, 0.012, 0.005]} rotation={[0, 0, 0]}>
+      <mesh position={[0, 0.012, 0.005]}>
         <cylinderGeometry args={[0.005, 0.005, 0.008, 10]} />
         <meshStandardMaterial color="#c0c0c0" metalness={0.6} roughness={0.3} />
       </mesh>
@@ -99,6 +91,54 @@ export function RobotCar() {
   const wheelRLRef = useRef<THREE.Group>(null!);
   const wheelRRRef = useRef<THREE.Group>(null!);
 
+  // Dynamic dimensions from project store
+  const motorSpec = useProjectStore(s => s.getMotorSpec());
+  const batterySpec = useProjectStore(s => s.getBatterySpec());
+  const mcuSpec = useProjectStore(s => s.getMcuSpec());
+  const driverSpec = useProjectStore(s => s.getDriverSpec());
+
+  // ── Wheel: use the motor's shaft diameter as a proxy for wheel hub,
+  //    and scale wheel radius proportional to motor body width.
+  //    Catalog width ranges 10–28 mm → wheel radius 25–42 mm.
+  const motorWidth = motorSpec?.dimensions[1] ?? 22; // mm
+  const motorLen = motorSpec?.dimensions[0] ?? 28;   // mm
+  const motorHeight = motorSpec?.dimensions[2] ?? 18; // mm
+
+  const wheelRadius = (20 + motorWidth * 0.8) / 1000; // 25–42 mm scaled to m
+  const wheelWidth = Math.max(0.012, motorWidth * 0.6 / 1000); // track with motor
+
+  // ── Motor block dimensions (mm → m) — directly from catalog
+  const motorDiameter = Math.max(motorWidth, motorHeight) / 1000;
+  const motorLength = motorLen / 1000;
+
+  // ── Chassis auto-sizes around motors
+  const axleHalfSpan = 0.055 + motorDiameter / 2;
+  const axleFrontX = 0.045 + motorLength / 2;
+  const axleRearX = -(0.045 + motorLength / 2);
+  const chassisHalfLength = axleFrontX + motorLength / 2 + 0.02;
+  const chassisHalfWidth = axleHalfSpan + 0.025;
+
+  // ── Battery box: scales with capacity & voltage
+  const battCapMah = batterySpec ? batterySpec.specs.capacityAh * 1000 : 2500;
+  const battVoltage = batterySpec?.specs.nominalVoltage ?? 6;
+  const battWeight = batterySpec?.weight ?? 100; // grams
+  const batteryBoxWidth = 0.02 + battCapMah / 40000;  // 22–82 mm
+  const batteryBoxDepth = 0.02 + battWeight / 4000;    // 22–55 mm
+  const batteryBoxHeight = 0.012 + battVoltage / 800;  // 13–27 mm
+
+  // ── Driver board: scales with physical dimensions
+  const driverDims = driverSpec?.dimensions ?? [43, 43, 27]; // mm
+  const driverBoardWidth = driverDims[0] / 1000;
+  const driverBoardDepth = driverDims[1] / 1000;
+  const driverBoardHeight = Math.max(0.004, driverDims[2] / 2000);
+
+  // ── MCU board: scales with pin count
+  const mcuDigitalPins = mcuSpec?.specs.digitalPinCount ?? 14;
+  const mcuAnalogPins = mcuSpec?.specs.analogPinCount ?? 6;
+  const mcuTotalPins = mcuDigitalPins + mcuAnalogPins;
+  const mcuBoardWidth = 0.02 + mcuTotalPins * 0.0015;  // 23–83 mm
+  const mcuBoardDepth = 0.03 + mcuDigitalPins * 0.002;  // 33–138 mm
+
   useFrame(() => {
     const state = useSimulationStore.getState();
     const body = state.rigidBodyState;
@@ -107,8 +147,6 @@ export function RobotCar() {
       if (body) {
         groupRef.current.position.x = body.x;
         groupRef.current.position.z = body.z;
-        // Car local forward = +X. rotation.y=R → local +X becomes world (cos(R), 0, -sin(R)).
-        // Physics forward = (cos(θ), 0, sin(θ)). Matching: cos(R)=cos(θ), -sin(R)=sin(θ) → R = -θ.
         groupRef.current.rotation.y = -body.theta;
       } else {
         groupRef.current.position.x = 0;
@@ -128,7 +166,7 @@ export function RobotCar() {
 
   const chassisGeo = useMemo(() => {
     const shape = new THREE.Shape();
-    const w = 0.09, l = 0.095, r = 0.012;
+    const w = chassisHalfWidth, l = chassisHalfLength, r = 0.012;
     shape.moveTo(-l + r, -w);
     shape.lineTo(l - r, -w);
     shape.quadraticCurveTo(l, -w, l, -w + r);
@@ -145,69 +183,109 @@ export function RobotCar() {
       bevelSize: 0.002,
       bevelSegments: 2,
     });
-  }, []);
+  }, [chassisHalfLength, chassisHalfWidth]);
+
+  const isRunning = useSimulationStore((s) => s.isRunning);
+  const pinStates = useMcuStore((s) => s.pinStates);
+  const pin13 = pinStates.find((p) => p.index === 13);
+  // Built-in LED (D13): reflect sketch digitalWrite(13, HIGH/LOW) directly when simulation is running
+  const builtInLedOn = Boolean(isRunning && (pin13?.value ?? 0) > 0.5);
 
   return (
-    <group ref={groupRef} position={[0, WHEEL_RADIUS, 0]}>
+    <group ref={groupRef} position={[0, wheelRadius, 0]}>
       {/* Chassis */}
-      <mesh geometry={chassisGeo} position={[0, 0.002, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-        <meshStandardMaterial color="#1e88e5" roughness={0.35} metalness={0.1} />
+      <mesh castShadow receiveShadow geometry={chassisGeo} position={[0, 0.002, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <meshStandardMaterial color="#2196f3" roughness={0.35} metalness={0.1} />
       </mesh>
 
       {/* Battery pack */}
-      <mesh position={[0.025, 0.025, 0]}>
-        <boxGeometry args={[0.05, 0.018, 0.04]} />
-        <meshStandardMaterial color="#333333" roughness={0.7} />
+      <mesh castShadow position={[0.025, 0.025, 0]}>
+        <boxGeometry args={[batteryBoxWidth, batteryBoxHeight, batteryBoxDepth]} />
+        <meshStandardMaterial color="#4caf50" roughness={0.6} />
+      </mesh>
+
+      {/* Driver board */}
+      <mesh castShadow position={[0, 0.022, chassisHalfWidth * 0.4]}>
+        <boxGeometry args={[driverBoardWidth, driverBoardHeight, driverBoardDepth]} />
+        <meshStandardMaterial color="#f44336" roughness={0.5} />
+      </mesh>
+      {/* Driver heatsink */}
+      <mesh castShadow position={[0, 0.022 + driverBoardHeight, chassisHalfWidth * 0.4]}>
+        <boxGeometry args={[driverBoardWidth * 0.6, 0.005, driverBoardDepth * 0.6]} />
+        <meshStandardMaterial color="#222222" metalness={0.6} roughness={0.3} />
       </mesh>
 
       {/* MCU board */}
-      <mesh position={[-0.035, 0.022, 0]}>
-        <boxGeometry args={[0.05, 0.008, 0.06]} />
+      <mesh castShadow position={[-0.035, 0.022, 0]}>
+        <boxGeometry args={[mcuBoardWidth, 0.008, mcuBoardDepth]} />
         <meshStandardMaterial color="#1b5e20" roughness={0.5} />
       </mesh>
       <mesh position={[-0.035, 0.028, 0]}>
         <boxGeometry args={[0.012, 0.003, 0.012]} />
         <meshStandardMaterial color="#111111" roughness={0.3} />
       </mesh>
+      {/* Built-in LED (D13) — reflects sketch digitalWrite(13, HIGH/LOW); off when no power or not running */}
+      <mesh position={[-0.035, 0.031, 0.008]}>
+        <sphereGeometry args={[0.002, 8, 8]} />
+        <meshStandardMaterial
+          color={builtInLedOn ? "#00e676" : "#333333"}
+          emissive={builtInLedOn ? "#00e676" : "#000000"}
+          emissiveIntensity={builtInLedOn ? 2.0 : 0}
+          roughness={0.3}
+        />
+      </mesh>
       <mesh position={[-0.062, 0.024, 0]}>
         <boxGeometry args={[0.008, 0.005, 0.01]} />
         <meshStandardMaterial color="#a0a0a0" metalness={0.8} roughness={0.2} />
       </mesh>
 
+      {/* Antenna flag for personality */}
+      <mesh position={[-chassisHalfLength + 0.01, 0.06, 0]}>
+        <cylinderGeometry args={[0.001, 0.001, 0.05, 6]} />
+        <meshStandardMaterial color="#666666" metalness={0.5} roughness={0.4} />
+      </mesh>
+      <mesh position={[-chassisHalfLength + 0.01, 0.085, 0.004]}>
+        <boxGeometry args={[0.001, 0.012, 0.01]} />
+        <meshStandardMaterial color="#ff5722" roughness={0.5} />
+      </mesh>
+
       {/* Motors */}
-      <MotorBlock position={[AXLE_FRONT_X, -0.005, -AXLE_HALF_SPAN + 0.005]} />
-      <MotorBlock position={[AXLE_FRONT_X, -0.005, AXLE_HALF_SPAN - 0.005]} />
+      <MotorBlock
+        position={[axleFrontX, -0.005, -axleHalfSpan + 0.005]}
+        motorDiameter={motorDiameter}
+        motorLength={motorLength}
+      />
+      <MotorBlock
+        position={[axleFrontX, -0.005, axleHalfSpan - 0.005]}
+        motorDiameter={motorDiameter}
+        motorLength={motorLength}
+      />
 
       {/* Ultrasonic sensor at front */}
-      <UltrasonicSensor position={[0.1, 0.018, 0]} />
+      <UltrasonicSensorMesh position={[chassisHalfLength + 0.005, 0.018, 0]} />
 
-      {/* Axle rods (along Z) */}
-      <mesh position={[AXLE_FRONT_X, -0.005, 0]} rotation={[Math.PI / 2, 0, 0]}>
-        <cylinderGeometry args={[0.002, 0.002, AXLE_HALF_SPAN * 2 + WHEEL_WIDTH * 2, 6]} />
+      {/* Axle rods */}
+      <mesh position={[axleFrontX, -0.005, 0]} rotation={[Math.PI / 2, 0, 0]}>
+        <cylinderGeometry args={[0.002, 0.002, axleHalfSpan * 2 + wheelWidth * 2, 6]} />
         <meshStandardMaterial color="#888" metalness={0.8} roughness={0.2} />
       </mesh>
-      <mesh position={[AXLE_REAR_X, -0.005, 0]} rotation={[Math.PI / 2, 0, 0]}>
-        <cylinderGeometry args={[0.002, 0.002, AXLE_HALF_SPAN * 2 + WHEEL_WIDTH * 2, 6]} />
+      <mesh position={[axleRearX, -0.005, 0]} rotation={[Math.PI / 2, 0, 0]}>
+        <cylinderGeometry args={[0.002, 0.002, axleHalfSpan * 2 + wheelWidth * 2, 6]} />
         <meshStandardMaterial color="#888" metalness={0.8} roughness={0.2} />
       </mesh>
 
-      {/*
-        Each wheel wrapper:
-        1. Positioned at the axle end
-        2. Rotated [PI/2, 0, 0] so the cylinder (default Y axis) now points along Z (the axle)
-        3. Inner ref group rotates around Y (the spin axis, which after parent rotation becomes Z world)
-      */}
-      <group position={[AXLE_FRONT_X, -0.005, -AXLE_HALF_SPAN - WHEEL_WIDTH / 2]} rotation={[Math.PI / 2, 0, 0]}>
-        <group ref={wheelFLRef}><Wheel /></group>
+      {/* Wheels */}
+      <group position={[axleFrontX, -0.005, -axleHalfSpan - wheelWidth / 2]} rotation={[Math.PI / 2, 0, 0]}>
+        <group ref={wheelFLRef}><Wheel radius={wheelRadius} width={wheelWidth} /></group>
       </group>
-      <group position={[AXLE_FRONT_X, -0.005, AXLE_HALF_SPAN + WHEEL_WIDTH / 2]} rotation={[Math.PI / 2, 0, 0]}>
-        <group ref={wheelFRRef}><Wheel /></group>
+      <group position={[axleFrontX, -0.005, axleHalfSpan + wheelWidth / 2]} rotation={[Math.PI / 2, 0, 0]}>
+        <group ref={wheelFRRef}><Wheel radius={wheelRadius} width={wheelWidth} /></group>
       </group>
-      <group position={[AXLE_REAR_X, -0.005, -AXLE_HALF_SPAN - WHEEL_WIDTH / 2]} rotation={[Math.PI / 2, 0, 0]}>
-        <group ref={wheelRLRef}><Wheel /></group>
+      <group position={[axleRearX, -0.005, -axleHalfSpan - wheelWidth / 2]} rotation={[Math.PI / 2, 0, 0]}>
+        <group ref={wheelRLRef}><Wheel radius={wheelRadius} width={wheelWidth} /></group>
       </group>
-      <group position={[AXLE_REAR_X, -0.005, AXLE_HALF_SPAN + WHEEL_WIDTH / 2]} rotation={[Math.PI / 2, 0, 0]}>
-        <group ref={wheelRRRef}><Wheel /></group>
+      <group position={[axleRearX, -0.005, axleHalfSpan + wheelWidth / 2]} rotation={[Math.PI / 2, 0, 0]}>
+        <group ref={wheelRRRef}><Wheel radius={wheelRadius} width={wheelWidth} /></group>
       </group>
     </group>
   );

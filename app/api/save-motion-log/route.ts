@@ -4,6 +4,15 @@ import path from 'path';
 
 export const dynamic = 'force-dynamic';
 
+/** Maximum request body size in bytes (2 MB) */
+const MAX_BODY_SIZE = 2 * 1024 * 1024;
+/** Maximum number of motion log entries per request */
+const MAX_ENTRIES = 5000;
+/** Minimum interval between requests in ms */
+const RATE_LIMIT_MS = 2000;
+
+let lastRequestTime = 0;
+
 interface Entry {
   tick: number;
   x: number;
@@ -20,6 +29,22 @@ interface Body {
   sessionId: number;
   entries: Entry[];
   exportedAt: string;
+}
+
+function isValidEntry(e: unknown): e is Entry {
+  if (typeof e !== 'object' || e === null) return false;
+  const obj = e as Record<string, unknown>;
+  return (
+    typeof obj.tick === 'number' &&
+    typeof obj.x === 'number' &&
+    typeof obj.z === 'number' &&
+    typeof obj.dir === 'number' &&
+    typeof obj.v === 'number' &&
+    typeof obj.omega === 'number' &&
+    typeof obj.motorL === 'number' &&
+    typeof obj.motorR === 'number' &&
+    typeof obj.phase === 'string'
+  );
 }
 
 interface PhaseSpan {
@@ -178,11 +203,64 @@ function buildTextReport(body: Body): string {
 
 export async function POST(request: Request) {
   try {
-    const body = (await request.json()) as Body;
+    // Rate limiting
+    const now = Date.now();
+    if (now - lastRequestTime < RATE_LIMIT_MS) {
+      return NextResponse.json(
+        { error: 'Too many requests. Please wait before saving again.' },
+        { status: 429 }
+      );
+    }
+    lastRequestTime = now;
+
+    // Size check via Content-Length header
+    const contentLength = Number(request.headers.get('content-length') ?? 0);
+    if (contentLength > MAX_BODY_SIZE) {
+      return NextResponse.json(
+        { error: `Request body too large (max ${MAX_BODY_SIZE / 1024 / 1024} MB)` },
+        { status: 413 }
+      );
+    }
+
+    const raw = await request.text();
+    if (raw.length > MAX_BODY_SIZE) {
+      return NextResponse.json(
+        { error: `Request body too large (max ${MAX_BODY_SIZE / 1024 / 1024} MB)` },
+        { status: 413 }
+      );
+    }
+
+    let body: Body;
+    try {
+      body = JSON.parse(raw) as Body;
+    } catch {
+      return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
+    }
+
     const { entries } = body;
     if (!Array.isArray(entries)) {
       return NextResponse.json({ error: 'entries (array) required' }, { status: 400 });
     }
+    if (entries.length > MAX_ENTRIES) {
+      return NextResponse.json(
+        { error: `Too many entries (max ${MAX_ENTRIES})` },
+        { status: 400 }
+      );
+    }
+    if (typeof body.sessionId !== 'number') {
+      return NextResponse.json({ error: 'sessionId (number) required' }, { status: 400 });
+    }
+
+    // Validate entry shapes
+    for (let i = 0; i < Math.min(entries.length, 10); i++) {
+      if (!isValidEntry(entries[i])) {
+        return NextResponse.json(
+          { error: `Invalid entry at index ${i}` },
+          { status: 400 }
+        );
+      }
+    }
+
     const projectRoot = process.cwd();
     const logsDir = path.join(projectRoot, 'logs');
     await mkdir(logsDir, { recursive: true });

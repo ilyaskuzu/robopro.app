@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { ElectricalEngine } from '../../src/core/physics/ElectricalEngine';
+import { ElectricalEngine } from '../../core/physics/ElectricalEngine';
 
 describe('ElectricalEngine', () => {
   const e = new ElectricalEngine();

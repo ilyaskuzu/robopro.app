@@ -360,8 +360,8 @@ void loop() {
     editorWires: [...STANDARD_MOTOR_WIRES],
 };
 
-const REMOTE_CONTROL: ProjectData = {
-    version: 1,
+const REMOTE_CONTROL: ProjectDataV2 = {
+    version: 2,
     name: 'Remote Control — Serial Commands',
     sketch: `// Remote Control — drive the car via Serial commands
 // Send: F (forward), B (backward), L (left), R (right), S (stop)
@@ -475,11 +475,14 @@ void loop() {
     ],
     obstacles: [],
     lineTrack: { points: [], lineWidth: 0.02 },
+    frictionZones: [],
+    walls: [],
+    terrainZones: [],
     editorWires: [...STANDARD_MOTOR_WIRES],
 };
 
-const STEPPER_CONTROL: ProjectData = {
-    version: 1,
+const STEPPER_CONTROL: ProjectDataV2 = {
+    version: 2,
     name: 'Stepper Motor Control',
     sketch: `// Stepper Motor Control — NEMA 17 + A4988, 200 steps forward, 1s wait, 200 steps back
 #define STEP_PIN 3
@@ -526,11 +529,14 @@ void loop() {
     ],
     obstacles: [],
     lineTrack: { points: [], lineWidth: 0.02 },
+    frictionZones: [],
+    walls: [],
+    terrainZones: [],
     editorWires: [{ fromComponentId: 'battery', fromPinName: 'V_OUT', toComponentId: 'driver', toPinName: 'VCC' }],
 };
 
-const LIGHT_FOLLOWER: ProjectData = {
-    version: 1,
+const LIGHT_FOLLOWER: ProjectDataV2 = {
+    version: 2,
     name: 'Light-Following Robot',
     sketch: `// Light-Following Robot — reads 2 LDR sensors, turns toward brighter side
 #define LDR_LEFT A0
@@ -603,11 +609,14 @@ void loop() {
     ],
     obstacles: [],
     lineTrack: { points: [], lineWidth: 0.02 },
+    frictionZones: [],
+    walls: [],
+    terrainZones: [],
     editorWires: [...STANDARD_MOTOR_WIRES],
 };
 
-const TEMP_LOGGER: ProjectData = {
-    version: 1,
+const TEMP_LOGGER: ProjectDataV2 = {
+    version: 2,
     name: 'Temperature Logger',
     sketch: `// Temperature Logger — DHT11 reads temperature via digital pin
 // In real hardware you would use the DHT library; here the simulator
@@ -652,6 +661,9 @@ void loop() {
     ],
     obstacles: [],
     lineTrack: { points: [], lineWidth: 0.02 },
+    frictionZones: [],
+    walls: [],
+    terrainZones: [],
     editorWires: [...BATTERY_TO_MCU_WIRE],
 };
 
@@ -773,8 +785,8 @@ void loop() {
     editorWires: [...STANDARD_MOTOR_WIRES],
 };
 
-const ENCODER_PID: ProjectData = {
-    version: 1,
+const ENCODER_PID: ProjectDataV2 = {
+    version: 2,
     name: 'Encoder PID — Speed Control',
     sketch: `// Encoder PID — proportional speed control using wheel encoders
 // Encoders output pulse rate proportional to wheel speed.
@@ -867,6 +879,9 @@ void loop() {
     ],
     obstacles: [],
     lineTrack: { points: [], lineWidth: 0.02 },
+    frictionZones: [],
+    walls: [],
+    terrainZones: [],
     editorWires: [...STANDARD_MOTOR_WIRES],
 };
 

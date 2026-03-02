@@ -20,6 +20,7 @@ export interface McuStoreState {
   loadFirmware: (hex: Uint8Array) => void;
   appendSerial: (line: string) => void;
   clearSerial: () => void;
+  syncPinStates: () => void;
   reset: () => void;
 }
 
@@ -38,5 +39,10 @@ export const useMcuStore = create<McuStoreState>((set, get) => ({
   loadFirmware: (hex) => { const { mcu } = get(); if (!mcu) return; mcu.loadFirmware(hex); set({ firmwareLoaded: true }); },
   appendSerial: (line) => set(prev => ({ serialBuffer: [...prev.serialBuffer, line] })),
   clearSerial: () => set({ serialBuffer: [] }),
+  syncPinStates: () => {
+    const { mcu } = get();
+    if (!mcu) return;
+    set({ pinStates: mcu.pins.map(p => ({ index: p.index, name: p.name, mode: p.mode, value: p.value })) });
+  },
   reset: () => { get().mcu?.reset(); set({ pinStates: [], serialBuffer: [], firmwareLoaded: false }); },
 }));

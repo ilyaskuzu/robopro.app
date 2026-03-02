@@ -1,17 +1,11 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Header } from "./Header";
 import { StatusBar } from "./StatusBar";
 import { SaveMotionLogOnStop } from "@/components/motion/SaveMotionLogOnStop";
-import { useMcuStore } from "@/lib/stores/useMcuStore";
 import { useSimulationStore } from "@/lib/stores/useSimulationStore";
-import { useWiringStore } from "@/lib/stores/useWiringStore";
-import { DcMotor, TT_MOTOR_6V } from "@/core/components/motors/DcMotor";
-import { L298N } from "@/core/components/drivers/L298N";
-import { BatteryPack, BATTERY_4xAA } from "@/core/components/power/BatteryPack";
-import type { SimulationConfig } from "@/core/simulation/SimulationLoop";
-import { ARDUINO_UNO_CLOCK_HZ } from "@/core/mcu/avr/ArduinoUnoBoard";
+import { useLayoutStore } from "@/lib/stores/useLayoutStore";
 import dynamic from "next/dynamic";
 
 const CodeEditorPanel = dynamic(
@@ -24,110 +18,99 @@ const ViewportPanel = dynamic(
   { ssr: false, loading: () => <div className="flex-1 bg-card animate-pulse" /> }
 );
 
+const ComponentPalette = dynamic(
+  () => import("@/components/palette/ComponentPalette").then((m) => m.ComponentPalette),
+  { ssr: false }
+);
+
 const BottomPanel = dynamic(
   () => import("@/components/layout/BottomPanel").then((m) => m.BottomPanel),
   { ssr: false }
 );
 
-const FIXED_DT = 1 / 60;
-
-function useBootstrapSimulation() {
-  const initBoard = useMcuStore((s) => s.initBoard);
-  const mcu = useMcuStore((s) => s.mcu);
-  const initialize = useSimulationStore((s) => s.initialize);
-  const addWire = useWiringStore((s) => s.addWire);
-  const wiring = useWiringStore((s) => s.wiring);
-
-  useEffect(() => {
-    initBoard("arduino-uno");
-  }, [initBoard]);
+/**
+ * Global keyboard shortcuts handled at the shell level.
+ */
+function useGlobalKeyboardShortcuts() {
+  const { setPage, page } = useLayoutStore();
+  const isRunning = useSimulationStore((s) => s.isRunning);
+  const play = useSimulationStore((s) => s.play);
+  const pause = useSimulationStore((s) => s.pause);
+  const shortcutHelpOpen = useLayoutStore((s) => s.shortcutHelpOpen);
+  const setShortcutHelpOpen = useLayoutStore((s) => s.setShortcutHelpOpen);
 
   useEffect(() => {
-    if (!mcu) return;
+    function handler(e: KeyboardEvent) {
+      const tag = (e.target as HTMLElement).tagName;
+      const isInput = tag === "INPUT" || tag === "TEXTAREA" || (e.target as HTMLElement).isContentEditable;
 
-    const motorLeft = new DcMotor("motor-left", TT_MOTOR_6V);
-    const motorRight = new DcMotor("motor-right", TT_MOTOR_6V);
-    const driver = new L298N("driver");
-    const battery = new BatteryPack("battery", BATTERY_4xAA);
+      if (e.ctrlKey || e.metaKey) {
+        if (e.key === "r" || e.key === "R") {
+          e.preventDefault();
+          if (isRunning) pause(); else play();
+        }
+        return;
+      }
 
-    const components = new Map<string, import("@/core/components/interfaces/IComponent").IComponent>([
-      ["driver", driver],
-      ["motor-left", motorLeft],
-      ["motor-right", motorRight],
-      ["battery", battery],
-    ]);
+      if (isInput) return;
 
-    addWire(5, "driver", "ENA");
-    addWire(6, "driver", "ENB");
-    addWire(7, "driver", "IN1");
-    addWire(8, "driver", "IN2");
-    addWire(9, "driver", "IN3");
-    addWire(10, "driver", "IN4");
-
-    const backEmfConstant = TT_MOTOR_6V.nominalVoltage / (TT_MOTOR_6V.noLoadRpm * Math.PI / 30);
-
-    const mass = 0.3;
-    const wheelRadius = 0.033;
-    const trackWidth = 0.13;
-    const chassisLength = 0.19;
-    const chassisWidth = 0.18;
-    const momentOfInertia = (1 / 12) * mass * (chassisLength * chassisLength + chassisWidth * chassisWidth);
-
-    const config: SimulationConfig = {
-      fixedDt: FIXED_DT,
-      mcuCyclesPerStep: Math.round(ARDUINO_UNO_CLOCK_HZ * FIXED_DT),
-      motorSpec: {
-        stallTorque: TT_MOTOR_6V.stallTorque,
-        noLoadRpm: TT_MOTOR_6V.noLoadRpm,
-        nominalVoltage: TT_MOTOR_6V.nominalVoltage,
-        armatureResistance: TT_MOTOR_6V.armatureResistance,
-        backEmfConstant,
-      },
-      loadSpec: { mass, wheelRadius, staticFrictionCoeff: 0.15, kineticFrictionCoeff: 0.12 },
-      environment: { gravity: 9.81, dt: FIXED_DT },
-      vehicleSpec: {
-        mass,
-        momentOfInertia,
-        wheelRadius,
-        trackWidth,
-        longitudinalDrag: 1.2, // so v → ~0 within 1 s stop (log verification: pivot starts from rest)
-        gravity: 9.81,
-      },
-      batteryVoltage: BATTERY_4xAA.nominalVoltage,
-      batteryInternalResistance: BATTERY_4xAA.internalResistance,
-      driverVoltageDrop: L298N.VOLTAGE_DROP,
-    };
-
-    initialize(mcu, components, wiring, config);
-
-    const loop = useSimulationStore.getState().simulationLoop;
-    if (loop) {
-      loop.setDriverMotorMappings([
-        { driverId: "driver", channelIndex: 0, motorId: "motor-left" },
-        { driverId: "driver", channelIndex: 1, motorId: "motor-right" },
-      ]);
+      if (e.key === "1") setPage("assembly");
+      else if (e.key === "2") setPage("wiring");
+      else if (e.key === "3") setPage("simulation");
+      else if (e.key === "?") setShortcutHelpOpen(!shortcutHelpOpen);
     }
-  }, [mcu, initialize, addWire, wiring]);
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [setPage, page, isRunning, play, pause, shortcutHelpOpen, setShortcutHelpOpen]);
 }
 
 export function SimulatorShell() {
-  useBootstrapSimulation();
+  useGlobalKeyboardShortcuts();
+  const [followCamera, setFollowCamera] = useState(false);
+  const page = useLayoutStore((s) => s.page);
+  const panels = {
+    palette: page === 'assembly',
+    codeEditor: page === 'simulation',
+    viewport: true,
+    bottomPanel: page === 'simulation',
+    environmentToolbar: false,
+  };
 
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-background text-foreground">
       <SaveMotionLogOnStop />
       <Header />
       <div className="flex flex-1 min-h-0">
-        <div className="w-[380px] min-w-[300px] border-r border-border flex flex-col">
-          <CodeEditorPanel />
-        </div>
+        {panels.palette && (
+          <div className="w-[200px] border-r border-border shrink-0">
+            <ComponentPalette />
+          </div>
+        )}
+        {panels.codeEditor && (
+          <div className="w-[450px] min-w-[300px] border-r border-border flex flex-col">
+            <CodeEditorPanel />
+          </div>
+        )}
         <div className="flex flex-1 flex-col min-w-[400px]">
-          <div className="flex-1 min-h-0">
-            <ViewportPanel />
-          </div>
-          <div className="h-[200px] border-t border-border">
-            <BottomPanel />
-          </div>
+          {panels.viewport && (
+            <div className="flex-1 min-h-0 relative">
+              <ViewportPanel follow={followCamera} />
+              <div className="absolute top-2 right-2 flex gap-2">
+                <button
+                  onClick={() => setFollowCamera(!followCamera)}
+                  className={`px-2 py-1 text-[10px] font-bold rounded border transition-colors ${followCamera ? 'bg-primary text-white border-primary' : 'bg-muted/80 text-muted-foreground border-border hover:bg-muted'
+                    }`}
+                >
+                  {followCamera ? 'CAMERA: FOLLOW' : 'CAMERA: FREE'}
+                </button>
+              </div>
+            </div>
+          )}
+          {panels.bottomPanel && (
+            <div className="h-[250px] border-t border-border">
+              <BottomPanel />
+            </div>
+          )}
         </div>
       </div>
       <StatusBar />
